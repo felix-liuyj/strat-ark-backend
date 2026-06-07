@@ -17,7 +17,7 @@ from models.ai import AgentReport, AgentReportTypeEnum
 from models.backtests import BacktestStatusEnum, BacktestTask
 from models.signals import Signal
 from responses.ai import AgentOpinionData, AgentReportData, AgentReportSummaryData
-from view_models import BaseViewModel
+from view_models.common.base import BaseViewModel
 
 __all__ = (
     "AnalyzeMarketViewModel",

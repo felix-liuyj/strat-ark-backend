@@ -27,7 +27,7 @@ from responses.settings import (
     PromptTemplateResponseData,
     SettingsOverviewResponseData,
 )
-from view_models import BaseViewModel
+from view_models.common.base import BaseViewModel
 
 __all__ = (
     "ClearDataViewModel",

@@ -27,7 +27,7 @@ from responses.strategy import (
     StrategyListItemResponseData,
     StrategyVersionResponseData,
 )
-from view_models import BaseViewModel
+from view_models.common.base import BaseViewModel
 
 __all__ = (
     "CreateStrategyViewModel",

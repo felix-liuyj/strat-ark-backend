@@ -20,7 +20,7 @@ from responses.trade import (
     TradeResponseData,
     TradeStatsResponseData,
 )
-from view_models import BaseViewModel
+from view_models.common.base import BaseViewModel
 
 __all__ = (
     "CancelOrderViewModel",

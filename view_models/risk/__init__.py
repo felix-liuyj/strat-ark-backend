@@ -24,7 +24,7 @@ from responses.risk import (
     RiskOverviewResponseData,
     RiskRuleResponseData,
 )
-from view_models import BaseViewModel
+from view_models.common.base import BaseViewModel
 
 __all__ = (
     "CreateRiskEventViewModel",

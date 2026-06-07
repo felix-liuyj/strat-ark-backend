@@ -32,7 +32,7 @@ from libs.sso import AUTH_INVALID_MESSAGE
 from models.account import UserTypeEnum
 from models.user import User
 from responses.auth import AuthTokenResponseData, UserProfileResponseData
-from view_models import BaseViewModel
+from view_models.common.base import BaseViewModel
 
 __all__ = (
     "ChangePasswordViewModel",

@@ -16,7 +16,7 @@ from models.signals import (
     SignalStatusEnum,
 )
 from responses.signals import SignalData
-from view_models import BaseViewModel
+from view_models.common.base import BaseViewModel
 
 __all__ = (
     "ApproveSignalViewModel",

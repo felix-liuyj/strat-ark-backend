@@ -30,7 +30,7 @@ from responses.user_center import (
     TwoFactorResponseData,
     UserSessionResponseData,
 )
-from view_models import BaseViewModel
+from view_models.common.base import BaseViewModel
 
 __all__ = (
     "BindOAuthViewModel",

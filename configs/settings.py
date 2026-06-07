@@ -13,7 +13,7 @@ __all__ = (
 
 
 class Settings(BaseSettings):
-    APP_NAME: str = "Backend Scaffold API"
+    APP_NAME: str = "Strat Ark Backend API"
     APP_NO: str = "strat-ark-backend"
     APP_ENV: str = "local"
     APP_HOST: str = "0.0.0.0"
