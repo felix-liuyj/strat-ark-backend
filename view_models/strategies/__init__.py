@@ -39,20 +39,20 @@ __all__ = (
 )
 
 _TYPE_LABELS: dict[StrategyTypeEnum, str] = {
-    StrategyTypeEnum.TREND: "趋势跟踪",
-    StrategyTypeEnum.MEAN_REVERSION: "均值回归",
-    StrategyTypeEnum.BREAKOUT: "突破",
-    StrategyTypeEnum.AI_ASSISTED: "AI 辅助",
-    StrategyTypeEnum.RISK_GUARD: "风控策略",
+    StrategyTypeEnum.TREND: "strategy.typeTrend",
+    StrategyTypeEnum.MEAN_REVERSION: "strategy.typeMeanRev",
+    StrategyTypeEnum.BREAKOUT: "strategy.typeBreakout",
+    StrategyTypeEnum.AI_ASSISTED: "strategy.typeAi",
+    StrategyTypeEnum.RISK_GUARD: "strategy.typeRiskGuard",
 }
 _RISK_LABELS: dict[StrategyRiskEnum, str] = {
-    StrategyRiskEnum.LOW: "低",
-    StrategyRiskEnum.MEDIUM: "中",
-    StrategyRiskEnum.HIGH: "高",
+    StrategyRiskEnum.LOW: "strategy.riskLow",
+    StrategyRiskEnum.MEDIUM: "strategy.riskMed",
+    StrategyRiskEnum.HIGH: "strategy.riskHigh",
 }
 _STATUS_LABELS: dict[StrategyStatusEnum, str] = {
-    StrategyStatusEnum.AVAILABLE: "可用",
-    StrategyStatusEnum.TESTING: "测试中",
+    StrategyStatusEnum.AVAILABLE: "strategy.statusActive",
+    StrategyStatusEnum.TESTING: "strategy.statusTesting",
 }
 _DEFAULT_PARAMS: dict[StrategyTypeEnum, list[list[str]]] = {
     StrategyTypeEnum.TREND: [["EMA Fast", "21"], ["EMA Slow", "55"], ["Stoploss", "-6%"]],
@@ -94,9 +94,9 @@ def _build_list_item(strategy: Strategy) -> StrategyListItemResponseData:
         timeframe=strategy.timeframe,
         market=strategy.market,
         risk=strategy.risk,
-        riskLabel=_RISK_LABELS.get(strategy.risk, "中"),
+        riskLabel=_RISK_LABELS.get(strategy.risk, "strategy.riskMed"),
         status=strategy.status,
-        statusLabel=_STATUS_LABELS.get(strategy.status, "可用"),
+        statusLabel=_STATUS_LABELS.get(strategy.status, "strategy.statusActive"),
         backtestReturn=strategy.backtest_return,
         maxDrawdown=strategy.max_drawdown,
         isBuiltin=strategy.is_builtin,
@@ -148,6 +148,7 @@ class ListStrategiesViewModel(_AuthedStrategyViewModel):
     """策略列表（内置 + 本人私有）。"""
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         statement = (
             select(Strategy)
@@ -172,6 +173,7 @@ class GetStrategyDetailViewModel(_AuthedStrategyViewModel):
         self.strategy_id = strategy_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         strategy = await self._load_visible_strategy(self.strategy_id)
         if strategy is None:
@@ -202,6 +204,7 @@ class CreateStrategyViewModel(_AuthedStrategyViewModel):
         self.form = form
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         name = self.form.name.strip()
         if not name:
@@ -252,6 +255,7 @@ class ImportStrategyViewModel(_AuthedStrategyViewModel):
         self.form = form
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         name = self.form.name.strip()
         if not name:
@@ -306,6 +310,7 @@ class UpdateStrategyViewModel(_AuthedStrategyViewModel):
         self.strategy_id = strategy_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         strategy = await self._load_visible_strategy(self.strategy_id)
         if strategy is None:
@@ -363,6 +368,7 @@ class SubmitStrategyBacktestViewModel(_AuthedStrategyViewModel):
         self.strategy_id = strategy_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         strategy = await self._load_visible_strategy(self.strategy_id)
         if strategy is None:

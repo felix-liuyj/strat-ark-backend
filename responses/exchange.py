@@ -22,7 +22,7 @@ class ExchangeSecurityCheckResponseData(ApiResponseModel):
     """单个安全检查项（前端绿勾 ok / 琥珀告警 warn）。"""
 
     key: str = Field(..., description="检查项标识：withdraw / ipWhitelist / tradeOnly")
-    label: str = Field(..., description="展示文案")
+    label: str = Field(..., description="展示 i18n key")
     passed: bool = Field(..., description="是否通过（true 绿勾，false 琥珀告警）")
 
 
@@ -32,7 +32,7 @@ class ExchangeAccountResponseData(ApiResponseModel):
     provider: ExchangeProviderEnum = Field(..., description="交易所")
     status: ExchangeStatusEnum = Field(..., description="连接状态")
     permission: ExchangePermissionEnum = Field(..., description="授权范围")
-    permissionLabel: str = Field(..., description="权限展示文案，例如 读取 / 交易")
+    permissionLabel: str = Field(..., description="权限展示 i18n key")
     apiKeyMask: str = Field(..., description="API Key 掩码，例如 ····7f3a（不明文回显）")
     ipWhitelist: str = Field(..., description="IP 白名单")
     isDefault: bool = Field(..., description="是否默认交易所")

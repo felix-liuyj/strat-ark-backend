@@ -96,6 +96,7 @@ class ListTradesViewModel(BaseViewModel):
         self.bots = {b.strip() for b in bots.split(",") if b.strip()} if bots else None
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         records = trading.list_trades()
         filtered = [r for r in records if _matches(r, self.query, self.status_filter, self.bots)]
@@ -110,6 +111,7 @@ class ListPositionsViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         positions = trading.list_positions()
         data = [
@@ -138,6 +140,7 @@ class ListOpenOrdersViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         orders = trading.list_open_orders()
         data = [
@@ -166,6 +169,7 @@ class TradeStatsViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         stats = trading.summarize_trades()
         data = TradeStatsResponseData(
@@ -214,6 +218,7 @@ class ExportTradesViewModel(BaseViewModel):
         return buffer.getvalue()
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         records = trading.list_trades()
         data = TradeExportResponseData(
@@ -233,6 +238,7 @@ class CancelOrderViewModel(BaseViewModel):
         self.order_id = order_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         orders = trading.list_open_orders()
         target = next((o for o in orders if o.order_ref == self.order_id), None)

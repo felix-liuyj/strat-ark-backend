@@ -110,6 +110,7 @@ class ListNotificationsViewModel(BaseViewModel):
         self.unread_only = unread_only
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -150,6 +151,7 @@ class CreateNotificationViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         title = self.form.title.strip()
         if not title:
@@ -187,6 +189,7 @@ class MarkNotificationReadViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         item = await self.db.get(Notification, self.notification_id)
         if item is None or item.user_id != int(self.checker.user_id):
@@ -210,6 +213,7 @@ class MarkAllNotificationsReadViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         result = await self.db.execute(
             update(Notification)
@@ -232,6 +236,7 @@ class ListNotificationChannelsViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         channels = (
             await self.db.scalars(
@@ -259,6 +264,7 @@ class CreateNotificationChannelViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -304,6 +310,7 @@ class UpdateNotificationChannelViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         channel = await self.db.get(NotificationChannel, self.channel_id)
         if channel is None or channel.user_id != int(self.checker.user_id):
@@ -346,6 +353,7 @@ class DeleteNotificationChannelViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         channel = await self.db.get(NotificationChannel, self.channel_id)
         if channel is None or channel.user_id != int(self.checker.user_id):
@@ -372,6 +380,7 @@ class SendChannelTestViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         channel = await self.db.get(NotificationChannel, self.channel_id)
         if channel is None or channel.user_id != int(self.checker.user_id):
@@ -398,6 +407,7 @@ class GetNotificationSubscriptionsViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         subs = (
             await self.db.scalars(
@@ -425,6 +435,7 @@ class UpdateNotificationSubscriptionsViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 

@@ -126,9 +126,9 @@ class BotAiSummaryResponseData(ApiResponseModel):
 
 
 class BotRiskRowResponseData(ApiResponseModel):
-    label: str = Field(..., description="风控项名称")
+    label: str = Field(..., description="风控项 i18n key")
     valuePct: float = Field(..., description="当前占用百分比（用于进度条宽度）")
-    valueLabel: str = Field(..., description="展示文案，例如 1.2% / 3%")
+    valueLabel: str = Field(..., description="展示值，例如 1.2% / 3%")
     safe: bool = Field(..., description="是否处于安全区间")
 
 

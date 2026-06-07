@@ -144,6 +144,7 @@ class SendVerificationCodeViewModel(BaseViewModel):
             raise RuntimeError("验证码邮件发送失败，请检查邮箱地址或稍后重试") from exc
 
     async def before(self) -> None:
+        await super().before()
         from libs import redis_cache
 
         email = self.form.email.strip().lower()
@@ -195,6 +196,7 @@ class RegisterViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         email = self.form.email.strip().lower()
         password = self.form.password
         display_name = self.form.displayName.strip()
@@ -253,6 +255,7 @@ class LoginViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         email = self.form.email.strip().lower()
         password = self.form.password
 
@@ -293,6 +296,7 @@ class RefreshTokenViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         refresh_token = self.form.refreshToken
 
         payload = decode_refresh_token(refresh_token)
@@ -317,6 +321,7 @@ class ResetPasswordViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         email = self.form.email.strip().lower()
         code = self.form.otp.strip()
         new_password = self.form.newPassword
@@ -363,6 +368,7 @@ class ChangePasswordViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         old_password = self.form.oldPassword
@@ -399,6 +405,7 @@ class GetCurrentUserViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         user = await self.db.get(User, int(self.checker.user_id))
@@ -425,6 +432,7 @@ class UpdateProfileViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         display_name = self.form.displayName.strip()
@@ -457,6 +465,7 @@ class ListUsersViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         if self.checker.user_type != UserTypeEnum.ADMIN:
             self.forbidden("仅管理员可查看用户列表")

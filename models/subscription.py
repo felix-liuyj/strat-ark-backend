@@ -61,7 +61,7 @@ class Plan(Base, TimestampMixin):
     """套餐定义（free / pro / team）。
 
     全平台共享的目录数据，不归属单个用户；额度上限以 ``-1`` 表示无限制。
-    价格、特性、额度均与前端 ``PLANS`` 常量对齐。
+    价格、特性、额度均与前端 ``PLANS`` 常量对齐；展示文案字段存稳定 i18n key。
     """
 
     __tablename__ = "plans"
@@ -74,7 +74,7 @@ class Plan(Base, TimestampMixin):
     # 年付折合每月价（前端按 10 个月计，省 2 个月）。
     price_yearly_per_month: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False, default=0)
     highlight: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    # 特性条目（中文源串列表），交由前端 i18n 双语化。
+    # 特性条目 i18n key 列表，交由前端按当前语言渲染。
     features: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     # 额度上限：bots / strategies / ai_analysis / backtests，-1 表示无限制。
     limit_bots: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

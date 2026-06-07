@@ -203,6 +203,7 @@ class ListEnginesViewModel(_AdminEngineViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
         engines = [await self._get_or_seed_engine(kind) for kind in EngineKindEnum]
@@ -227,6 +228,7 @@ class GetEngineMonitorViewModel(_AdminEngineViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
         await self._get_or_seed_engine(self.engine_kind)
@@ -288,6 +290,7 @@ class GetEngineConnectionViewModel(_AdminEngineViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
         engine = await self._get_or_seed_engine(self.engine_kind)
@@ -317,6 +320,7 @@ class UpdateEngineConnectionViewModel(_AdminEngineViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
         engine = await self._get_or_seed_engine(self.engine_kind)
@@ -343,6 +347,7 @@ class GetEngineDeploymentViewModel(_AdminEngineViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
         engine = await self._get_or_seed_engine(self.engine_kind)
@@ -373,6 +378,7 @@ class UpdateEngineDeploymentViewModel(_AdminEngineViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
         engine = await self._get_or_seed_engine(self.engine_kind)
@@ -429,6 +435,7 @@ class ExecuteEngineOpViewModel(_AdminEngineViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
 
@@ -508,6 +515,7 @@ class ListEngineOpsViewModel(_AdminEngineViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
         stmt = select(EngineOp)

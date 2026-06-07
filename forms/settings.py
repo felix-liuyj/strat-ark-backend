@@ -32,7 +32,7 @@ class PromptTemplateForm(ApiFormModel):
     创建时不传 id（由后端生成）；更新时通过路径参数定位，name/content/enabled 覆盖。
     """
 
-    name: str = Body(..., embed=True, description="模板名称（中文源串）")
+    name: str = Body(..., embed=True, description="模板名称")
     description: str = Body("", embed=True, description="模板说明")
     content: str = Body("", embed=True, description="Prompt 模板正文")
     enabled: bool = Body(False, embed=True, description="是否启用（启用态用于实际分析）")

@@ -20,7 +20,7 @@ __all__ = (
 
 class RiskMetricResponseData(ApiResponseModel):
     key: str = Field(..., description="指标键，如 daily_loss")
-    label: str = Field(..., description="指标展示名")
+    label: str = Field(..., description="指标展示 i18n key")
     current: float = Field(..., description="当前值")
     limit: float = Field(..., description="限额值")
     unit: str = Field(..., description="单位")
@@ -34,17 +34,17 @@ class RiskOverviewResponseData(ApiResponseModel):
 
 class RiskLevelCardResponseData(ApiResponseModel):
     scope: RiskRuleScopeEnum = Field(..., description="风控分层")
-    title: str = Field(..., description="分层标题")
-    subtitle: str = Field(..., description="分层副标题")
+    title: str = Field(..., description="分层标题 i18n key")
+    subtitle: str = Field(..., description="分层副标题 i18n key")
     status: str = Field(..., description="该层状态：run 正常 / warn 关注")
-    statusLabel: str = Field(..., description="状态文案")
+    statusLabel: str = Field(..., description="状态 i18n key")
 
 
 class RiskRuleResponseData(ApiResponseModel):
     id: int = Field(..., description="规则 ID")
     scope: RiskRuleScopeEnum = Field(..., description="风控分层")
     ruleType: RiskRuleTypeEnum = Field(..., description="规则类型")
-    label: str = Field(..., description="规则展示名")
+    label: str = Field(..., description="规则展示 i18n key")
     currentValue: float | None = Field(None, description="当前值")
     limitValue: float | None = Field(None, description="限额值")
     unit: str = Field(..., description="单位")
@@ -60,8 +60,8 @@ class RiskEventResponseData(ApiResponseModel):
     level: RiskEventLevelEnum = Field(..., description="事件级别")
     scope: RiskRuleScopeEnum = Field(..., description="所属分层")
     ruleType: RiskRuleTypeEnum | None = Field(None, description="触发的规则类型")
-    title: str = Field(..., description="事件标题")
-    description: str = Field(..., description="事件描述")
+    title: str = Field(..., description="事件标题 i18n key 或动态文案")
+    description: str = Field(..., description="事件描述 i18n key 或动态文案")
     symbol: str | None = Field(None, description="关联交易对")
     actionTaken: str | None = Field(None, description="处置动作")
     resolved: bool = Field(..., description="是否已处理")

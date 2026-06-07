@@ -22,7 +22,7 @@ __all__ = (
 
 
 class StrategyTypeEnum(StrEnum):
-    """策略类型（前端：趋势跟踪 / 均值回归 / 突破 / AI 辅助 / 风控策略）。"""
+    """策略类型。"""
 
     TREND = "trend"
     MEAN_REVERSION = "mean_reversion"
@@ -32,7 +32,7 @@ class StrategyTypeEnum(StrEnum):
 
 
 class StrategyRiskEnum(StrEnum):
-    """策略风险等级（前端：高 / 中 / 低）。"""
+    """策略风险等级。"""
 
     LOW = "low"
     MEDIUM = "medium"
@@ -40,7 +40,7 @@ class StrategyRiskEnum(StrEnum):
 
 
 class StrategyStatusEnum(StrEnum):
-    """策略状态（前端：可用 / 测试中）。"""
+    """策略状态。"""
 
     AVAILABLE = "available"
     TESTING = "testing"
@@ -79,7 +79,7 @@ class Strategy(Base, TimestampMixin):
 
     # 有序参数键值对：[["EMA Fast", "21"], ...]。
     params: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
-    # 风险标签：["趋势", "中风险", "15m/1h"]。
+    # 风险标签：i18n key 或技术原值列表。
     tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     source_code: Mapped[str] = mapped_column(Text, nullable=False, default="")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")

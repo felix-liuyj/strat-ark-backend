@@ -94,6 +94,7 @@ class AnalyzeMarketViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         symbol = self.form.symbol.strip()
@@ -144,6 +145,7 @@ class ReviewSignalViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         signal = await self.db.get(Signal, self.form.signalId)
@@ -193,6 +195,7 @@ class ReviewBacktestReportViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         task = await self.db.get(BacktestTask, self.form.backtestTaskId)
@@ -250,6 +253,7 @@ class ListReportsViewModel(BaseViewModel):
         self.report_type = report_type
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         statement = select(AgentReport).where(AgentReport.user_id == int(self.checker.user_id))
@@ -271,6 +275,7 @@ class GetReportViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         report = await self.db.get(AgentReport, self.report_id)

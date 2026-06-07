@@ -39,9 +39,9 @@ __all__ = (
 )
 
 _PERMISSION_LABELS: dict[ExchangePermissionEnum, str] = {
-    ExchangePermissionEnum.READ_ONLY: "仅读取",
-    ExchangePermissionEnum.READ_TRADE: "读取 / 交易",
-    ExchangePermissionEnum.READ_TRADE_WITHDRAW: "读取 / 交易 / 提现",
+    ExchangePermissionEnum.READ_ONLY: "exchanges.permReadOnly",
+    ExchangePermissionEnum.READ_TRADE: "exchanges.permReadTrade",
+    ExchangePermissionEnum.READ_TRADE_WITHDRAW: "exchanges.permReadTradeWithdraw",
 }
 
 
@@ -64,17 +64,17 @@ def _build_checks(account: ExchangeAccount) -> list[ExchangeSecurityCheckRespons
     return [
         ExchangeSecurityCheckResponseData(
             key="withdraw",
-            label="未开启提现权限" if account.withdraw_disabled else "已开启提现权限（高风险）",
+            label="exchanges.checkNoWithdraw" if account.withdraw_disabled else "exchanges.checkWithdrawOn",
             passed=account.withdraw_disabled,
         ),
         ExchangeSecurityCheckResponseData(
             key="ipWhitelist",
-            label="已启用 IP 白名单" if account.ip_whitelist_enabled else "建议启用 IP 白名单",
+            label="exchanges.checkIpOn" if account.ip_whitelist_enabled else "exchanges.checkIpSuggest",
             passed=account.ip_whitelist_enabled,
         ),
         ExchangeSecurityCheckResponseData(
             key="tradeOnly",
-            label="仅允许交易" if account.trade_only else "权限范围偏大",
+            label="exchanges.checkTradeOnly" if account.trade_only else "exchanges.checkTooWide",
             passed=account.trade_only,
         ),
     ]
@@ -87,7 +87,7 @@ def _build_account_data(account: ExchangeAccount) -> ExchangeAccountResponseData
         provider=account.provider,
         status=account.status,
         permission=account.permission,
-        permissionLabel=_PERMISSION_LABELS.get(account.permission, "读取 / 交易"),
+        permissionLabel=_PERMISSION_LABELS.get(account.permission, "exchanges.permReadTrade"),
         apiKeyMask=account.api_key_mask,
         ipWhitelist=account.ip_whitelist,
         isDefault=account.is_default,
@@ -118,6 +118,7 @@ class ListExchangeAccountsViewModel(_AuthedExchangeViewModel):
     """交易所账户列表（仅本人）。"""
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         statement = (
             select(ExchangeAccount)
@@ -142,6 +143,7 @@ class CreateExchangeAccountViewModel(_AuthedExchangeViewModel):
         self.form = form
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         name = self.form.name.strip()
@@ -205,6 +207,7 @@ class UpdateExchangeAccountViewModel(_AuthedExchangeViewModel):
         self.account_id = account_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         account = await self._load_owned_account(self.account_id)
         if account is None:
@@ -245,6 +248,7 @@ class DeleteExchangeAccountViewModel(_AuthedExchangeViewModel):
         self.account_id = account_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         account = await self._load_owned_account(self.account_id)
         if account is None:
@@ -284,6 +288,7 @@ class TestExchangeConnectionViewModel(_AuthedExchangeViewModel):
         self.account_id = account_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         account = await self._load_owned_account(self.account_id)
         if account is None:
@@ -315,6 +320,7 @@ class SyncExchangeBalanceViewModel(_AuthedExchangeViewModel):
         self.account_id = account_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         account = await self._load_owned_account(self.account_id)
         if account is None:
@@ -351,6 +357,7 @@ class GetExchangePermissionViewModel(_AuthedExchangeViewModel):
         self.account_id = account_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         account = await self._load_owned_account(self.account_id)
         if account is None:
@@ -383,6 +390,7 @@ class SetDefaultExchangeAccountViewModel(_AuthedExchangeViewModel):
         self.account_id = account_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         account = await self._load_owned_account(self.account_id)
         if account is None:

@@ -59,6 +59,7 @@ class MarketOverviewViewModel(BaseViewModel):
         super().__init__(request=request)
 
     async def before(self) -> None:
+        await super().before()
         overview = market_data.get_market_overview()
         data = MarketOverviewResponseData(
             totalMarketCap=overview.total_market_cap,
@@ -81,6 +82,7 @@ class ListTickersViewModel(BaseViewModel):
         self.market_type = market_type
 
     async def before(self) -> None:
+        await super().before()
         tickers = market_data.list_tickers()
         if self.market_type and self.market_type != "all":
             tickers = [t for t in tickers if t.market_type == self.market_type]
@@ -95,6 +97,7 @@ class TopMoversViewModel(BaseViewModel):
         self.limit = max(1, min(limit, 10))
 
     async def before(self) -> None:
+        await super().before()
         gainers, losers = market_data.get_top_movers(self.limit)
         data = TopMoversResponseData(
             gainers=[_ticker_to_response(t) for t in gainers],
@@ -110,6 +113,7 @@ class ListHeatmapViewModel(BaseViewModel):
         super().__init__(request=request)
 
     async def before(self) -> None:
+        await super().before()
         # 热力图为「币种 -> 涨跌幅」的轻量映射，直接返回字典列表。
         data = [{"symbol": sym, "changePct": pct} for sym, pct in market_data.get_heatmap()]
         self.operating_successfully(data)
@@ -123,6 +127,7 @@ class GetMarketDetailViewModel(BaseViewModel):
         self.symbol = symbol
 
     async def before(self) -> None:
+        await super().before()
         detail = market_data.get_ticker_detail(self.symbol)
         if detail is None:
             self.not_found("交易对不存在")
@@ -172,6 +177,7 @@ class ListWatchlistViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         items = (
             await self.db.scalars(
@@ -198,6 +204,7 @@ class AddWatchlistViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         symbol = self.form.symbol.strip().upper()
         if market_data.get_ticker(symbol) is None:
@@ -230,6 +237,7 @@ class RemoveWatchlistViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         normalized = self.symbol.strip().upper()
         item = await self.db.scalar(

@@ -42,26 +42,26 @@ __all__ = (
 # 元组列：(scope, rule_type, label, current_value, limit_value, unit)。
 _DefaultRule = tuple[RiskRuleScopeEnum, RiskRuleTypeEnum, str, float | None, float | None, str]
 _DEFAULT_RULES: list[_DefaultRule] = [
-    (RiskRuleScopeEnum.ACCOUNT, RiskRuleTypeEnum.DAILY_LOSS_LIMIT, "Daily Loss Limit", 1.2, 3.0, "%"),
-    (RiskRuleScopeEnum.ACCOUNT, RiskRuleTypeEnum.MAX_DRAWDOWN, "Max Drawdown", 6.2, 10.0, "%"),
-    (RiskRuleScopeEnum.SYMBOL, RiskRuleTypeEnum.MAX_POSITION_SIZE, "Max Position Size", 4.1, 5.0, "%"),
-    (RiskRuleScopeEnum.ORDER, RiskRuleTypeEnum.MAX_LEVERAGE, "Max Leverage", 1.0, 3.0, "x"),
-    (RiskRuleScopeEnum.STRATEGY, RiskRuleTypeEnum.COOLDOWN, "Cooldown (连亏)", 1.0, 3.0, "次"),
-    (RiskRuleScopeEnum.SIGNAL, RiskRuleTypeEnum.NEWS_FILTER, "News Risk Filter", None, None, ""),
-    (RiskRuleScopeEnum.SIGNAL, RiskRuleTypeEnum.VOLATILITY_FILTER, "Volatility Filter", None, None, ""),
-    (RiskRuleScopeEnum.SYMBOL, RiskRuleTypeEnum.LIQUIDITY_FILTER, "Liquidity Filter", None, None, ""),
+    (RiskRuleScopeEnum.ACCOUNT, RiskRuleTypeEnum.DAILY_LOSS_LIMIT, "risk.ruleDailyLoss", 1.2, 3.0, "%"),
+    (RiskRuleScopeEnum.ACCOUNT, RiskRuleTypeEnum.MAX_DRAWDOWN, "risk.ruleMaxDrawdown", 6.2, 10.0, "%"),
+    (RiskRuleScopeEnum.SYMBOL, RiskRuleTypeEnum.MAX_POSITION_SIZE, "risk.ruleMaxPosition", 4.1, 5.0, "%"),
+    (RiskRuleScopeEnum.ORDER, RiskRuleTypeEnum.MAX_LEVERAGE, "risk.ruleMaxLeverage", 1.0, 3.0, "x"),
+    (RiskRuleScopeEnum.STRATEGY, RiskRuleTypeEnum.COOLDOWN, "risk.ruleCooldown", 1.0, 3.0, "次"),
+    (RiskRuleScopeEnum.SIGNAL, RiskRuleTypeEnum.NEWS_FILTER, "risk.ruleNews", None, None, ""),
+    (RiskRuleScopeEnum.SIGNAL, RiskRuleTypeEnum.VOLATILITY_FILTER, "risk.ruleVolatility", None, None, ""),
+    (RiskRuleScopeEnum.SYMBOL, RiskRuleTypeEnum.LIQUIDITY_FILTER, "risk.ruleLiquidity", None, None, ""),
 ]
 
 # 默认分层卡（与前端 6 张分层卡对齐）。
 # 元组列：(scope, title, subtitle, status, status_label)。
 _DefaultLevel = tuple[RiskRuleScopeEnum, str, str, str, str]
 _DEFAULT_LEVELS: list[_DefaultLevel] = [
-    (RiskRuleScopeEnum.ACCOUNT, "账户级风险", "权益、回撤、总敞口", "run", "正常"),
-    (RiskRuleScopeEnum.BOT, "Bot 级风险", "3 个 Bot 全部正常", "run", "正常"),
-    (RiskRuleScopeEnum.STRATEGY, "策略级风险", "Donchian 接近回撤阈值", "warn", "关注"),
-    (RiskRuleScopeEnum.SYMBOL, "持仓级风险", "单币种敞口偏高", "warn", "关注"),
-    (RiskRuleScopeEnum.ORDER, "订单级风险", "单笔规模、滑点检查", "run", "正常"),
-    (RiskRuleScopeEnum.SIGNAL, "AI 信号级风险", "置信度过滤、新闻风险", "run", "正常"),
+    (RiskRuleScopeEnum.ACCOUNT, "risk.levelAccount", "risk.levelAccountSub", "run", "status.normal"),
+    (RiskRuleScopeEnum.BOT, "risk.levelBot", "risk.levelBotSub", "run", "status.normal"),
+    (RiskRuleScopeEnum.STRATEGY, "risk.levelStrategy", "risk.levelStrategySub", "warn", "status.watch"),
+    (RiskRuleScopeEnum.SYMBOL, "risk.levelPosition", "risk.levelPositionSub", "warn", "status.watch"),
+    (RiskRuleScopeEnum.ORDER, "risk.levelOrder", "risk.levelOrderSub", "run", "status.normal"),
+    (RiskRuleScopeEnum.SIGNAL, "risk.levelSignal", "risk.levelSignalSub", "run", "status.normal"),
 ]
 
 # 默认触发记录（事件表为空时只读回落，与前端 EVENTS 五条对齐）。
@@ -72,8 +72,8 @@ _DEFAULT_EVENTS: list[_DefaultEvent] = [
         RiskEventLevelEnum.WARN,
         RiskRuleScopeEnum.SYMBOL,
         RiskRuleTypeEnum.VOLATILITY_FILTER,
-        "波动率过滤触发",
-        "SOL/USDT 波动异常，仓位下调 50%",
+        "risk.evVolatility",
+        "risk.evVolatilityDesc",
         "SOL/USDT",
         "08:15",
     ),
@@ -81,8 +81,8 @@ _DEFAULT_EVENTS: list[_DefaultEvent] = [
         RiskEventLevelEnum.DANGER,
         RiskRuleScopeEnum.SIGNAL,
         None,
-        "信号被拒绝",
-        "DOGE/USDT 置信度 44% < 阈值",
+        "risk.evRejected",
+        "risk.evRejectedDesc",
         "DOGE/USDT",
         "08:50",
     ),
@@ -90,8 +90,8 @@ _DEFAULT_EVENTS: list[_DefaultEvent] = [
         RiskEventLevelEnum.WARN,
         RiskRuleScopeEnum.SYMBOL,
         RiskRuleTypeEnum.MAX_POSITION_SIZE,
-        "单币种敞口预警",
-        "BTC 敞口达 4.1% / 5%",
+        "risk.evExposure",
+        "risk.evExposureDesc",
         "BTC/USDT",
         "09:30",
     ),
@@ -99,12 +99,12 @@ _DEFAULT_EVENTS: list[_DefaultEvent] = [
         RiskEventLevelEnum.SUCCESS,
         RiskRuleScopeEnum.ORDER,
         None,
-        "订单风控通过",
-        "BTC/USDT 入场已批准",
+        "risk.evApproved",
+        "risk.evApprovedDesc",
         "BTC/USDT",
         "10:28",
     ),
-    (RiskEventLevelEnum.INFO, RiskRuleScopeEnum.ACCOUNT, None, "每日风控扫描完成", "未发现高风险项", None, "10:00"),
+    (RiskEventLevelEnum.INFO, RiskRuleScopeEnum.ACCOUNT, None, "risk.evScan", "risk.evScanDesc", None, "10:00"),
 ]
 
 
@@ -183,6 +183,7 @@ class RiskOverviewViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         overview = risk_engine.get_risk_overview()
         data = RiskOverviewResponseData(
@@ -204,6 +205,7 @@ class ListRiskLevelsViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         cards = [
             RiskLevelCardResponseData(
@@ -227,6 +229,7 @@ class ListRiskRulesViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         rules = (
             await self.db.scalars(
@@ -249,6 +252,7 @@ class ListRiskEventsViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         events = (
             await self.db.scalars(
@@ -274,6 +278,7 @@ class CreateRiskRuleViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         rule = RiskRule(
             user_id=int(self.checker.user_id),
@@ -313,6 +318,7 @@ class UpdateRiskRuleViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         rule = await self.db.get(RiskRule, self.rule_id)
         if rule is None or rule.user_id != int(self.checker.user_id):
@@ -415,6 +421,7 @@ class UpdateRiskRulesBulkViewModel(BaseViewModel):
         ]
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
         # 全量覆盖：先删旧规则再写新规则，保证「一次下发」语义一致。
@@ -445,6 +452,7 @@ class CreateRiskEventViewModel(BaseViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         event = RiskEvent(
             user_id=int(self.checker.user_id),

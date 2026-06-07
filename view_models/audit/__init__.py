@@ -123,6 +123,7 @@ class ListAuditLogsViewModel(_AdminAuditViewModel):
         self.page_size = min(max(page_size, 1), 200)
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
         start = _parse_time(self.start_time)
@@ -162,6 +163,7 @@ class GetAuditEntryViewModel(_AdminAuditViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
         row = await self.db.get(AuditLog, self.entry_id)
@@ -180,6 +182,7 @@ class GetAuditKpiViewModel(_AdminAuditViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
 
@@ -230,6 +233,7 @@ class VerifyAuditChainViewModel(_AdminAuditViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
 
@@ -290,6 +294,7 @@ class ExportAuditLogsViewModel(_AdminAuditViewModel):
         self.checker = checker
 
     async def before(self) -> None:
+        await super().before()
         if not self._require_admin():
             return
         start = _parse_time(self.form.startTime)

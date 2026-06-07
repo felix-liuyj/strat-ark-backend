@@ -18,7 +18,7 @@ router = APIRouter(prefix="/oss")
     response_model=BaseResponseModel[PresignPutResponseData],
     summary="申请 OSS PUT 预签名",
     description="前端通过该接口获取预签名 URL，再直接将文件上传至 OSS（需登录）。",
-    tags=["通用 Common/OSS"],
+    tags=["StratArk/OSS"],
 )
 async def presign(
     request: Request,
@@ -33,7 +33,7 @@ async def presign(
     response_model=BaseResponseModel[None],
     summary="确认上传并设置对象 ACL",
     description="上传完成后调用，后端将 OSS 对象显式设置为 public-read（需登录）。",
-    tags=["通用 Common/OSS"],
+    tags=["StratArk/OSS"],
 )
 async def confirm(
     request: Request,

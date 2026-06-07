@@ -139,6 +139,7 @@ class ListBotsViewModel(_AuthedBotViewModel):
     """机器人列表（仅本人）。"""
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         bots = (
             await self.db.scalars(
@@ -160,6 +161,7 @@ class GetBotDetailViewModel(_AuthedBotViewModel):
         self.bot_id = bot_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         bot = await self._load_owned_bot(self.bot_id)
         if bot is None:
@@ -183,6 +185,7 @@ class CreateBotViewModel(_AuthedBotViewModel):
         self.form = form
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -252,6 +255,7 @@ class UpdateBotViewModel(_AuthedBotViewModel):
         self.bot_id = bot_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         bot = await self._load_owned_bot(self.bot_id)
         if bot is None:
@@ -304,6 +308,7 @@ class UpdateBotSettingsViewModel(_AuthedBotViewModel):
         self.bot_id = bot_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         bot = await self._load_owned_bot(self.bot_id)
         if bot is None:
@@ -331,6 +336,7 @@ class DeleteBotViewModel(_AuthedBotViewModel):
         self.bot_id = bot_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         bot = await self._load_owned_bot(self.bot_id)
         if bot is None:
@@ -385,6 +391,7 @@ class StartBotViewModel(_BotLifecycleViewModel):
     """启动机器人。"""
 
     async def before(self) -> None:
+        await super().before()
         await self._run("start")
 
 
@@ -392,6 +399,7 @@ class StopBotViewModel(_BotLifecycleViewModel):
     """停止机器人。"""
 
     async def before(self) -> None:
+        await super().before()
         await self._run("stop")
 
 
@@ -399,6 +407,7 @@ class RestartBotViewModel(_BotLifecycleViewModel):
     """重启机器人。"""
 
     async def before(self) -> None:
+        await super().before()
         await self._run("restart")
 
 
@@ -410,6 +419,7 @@ class EnableBotLiveViewModel(_AuthedBotViewModel):
         self.bot_id = bot_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         bot = await self._load_owned_bot(self.bot_id)
         if bot is None:
@@ -438,6 +448,7 @@ class GetBotTradesViewModel(_AuthedBotViewModel):
         self.bot_id = bot_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         bot = await self._load_owned_bot(self.bot_id)
         if bot is None:
@@ -472,6 +483,7 @@ class GetBotPositionsViewModel(_AuthedBotViewModel):
         self.bot_id = bot_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         bot = await self._load_owned_bot(self.bot_id)
         if bot is None:
@@ -513,6 +525,7 @@ class GetBotLogsViewModel(_AuthedBotViewModel):
         self.level = level
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         bot = await self._load_owned_bot(self.bot_id)
         if bot is None:
@@ -540,6 +553,7 @@ class GetBotAiSummaryViewModel(_AuthedBotViewModel):
         self.bot_id = bot_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         bot = await self._load_owned_bot(self.bot_id)
         if bot is None:
@@ -574,6 +588,7 @@ class GetBotRiskStatusViewModel(_AuthedBotViewModel):
         self.bot_id = bot_id
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         bot = await self._load_owned_bot(self.bot_id)
         if bot is None:
@@ -581,10 +596,10 @@ class GetBotRiskStatusViewModel(_AuthedBotViewModel):
             return
 
         rows = [
-            BotRiskRowResponseData(label="单日亏损", valuePct=40.0, valueLabel="1.2% / 3%", safe=True),
-            BotRiskRowResponseData(label="最大回撤", valuePct=62.0, valueLabel="6.2% / 10%", safe=False),
-            BotRiskRowResponseData(label="单币种敞口", valuePct=82.0, valueLabel="4.1% / 5%", safe=False),
-            BotRiskRowResponseData(label="连续亏损", valuePct=33.0, valueLabel="1 / 3", safe=True),
-            BotRiskRowResponseData(label="杠杆", valuePct=33.0, valueLabel="1x / 3x", safe=True),
+            BotRiskRowResponseData(label="botDetail.dailyLoss", valuePct=40.0, valueLabel="1.2% / 3%", safe=True),
+            BotRiskRowResponseData(label="botDetail.maxDrawdown", valuePct=62.0, valueLabel="6.2% / 10%", safe=False),
+            BotRiskRowResponseData(label="botDetail.singleExposure", valuePct=82.0, valueLabel="4.1% / 5%", safe=False),
+            BotRiskRowResponseData(label="botDetail.losingStreak", valuePct=33.0, valueLabel="1 / 3", safe=True),
+            BotRiskRowResponseData(label="botDetail.leverage", valuePct=33.0, valueLabel="1x / 3x", safe=True),
         ]
         self.operating_successfully(BotRiskStatusResponseData(overall="Normal", rows=rows))

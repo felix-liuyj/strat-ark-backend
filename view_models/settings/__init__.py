@@ -204,6 +204,7 @@ class GetSettingsOverviewViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -247,6 +248,7 @@ class UpdateConfigGroupViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
         group = self.form.group
@@ -309,6 +311,7 @@ class CreatePromptTemplateViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -362,6 +365,7 @@ class UpdatePromptTemplateViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -409,6 +413,7 @@ class DeletePromptTemplateViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -445,6 +450,7 @@ class ExportDataViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         result = export_data(self.form.fmt, self.form.scope)
@@ -479,6 +485,7 @@ class ClearDataViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         result = clear_data(self.form.target)

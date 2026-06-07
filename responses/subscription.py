@@ -37,12 +37,12 @@ class PlanResponseData(ApiResponseModel):
     """单个套餐定义（与前端 PlanDef 对齐）。"""
 
     id: PlanEnum = Field(..., description="套餐标识")
-    name: str = Field(..., description="套餐名称（中文源串）")
-    tagline: str = Field(..., description="套餐标语")
+    name: str = Field(..., description="套餐名称 i18n key")
+    tagline: str = Field(..., description="套餐标语 i18n key")
     priceMonthly: float = Field(..., description="月付价（美元 / 月）")
     priceYearlyPerMonth: float = Field(..., description="年付折合每月价")
     highlight: bool = Field(..., description="是否推荐高亮")
-    features: list[str] = Field(..., description="特性条目（中文源串）")
+    features: list[str] = Field(..., description="特性条目 i18n key 列表")
     limits: PlanLimitsResponseData = Field(..., description="额度上限")
 
 
@@ -50,10 +50,10 @@ class UsageBarResponseData(ApiResponseModel):
     """本月用量条（与前端 UsageBar 对齐）。"""
 
     metric: UsageMetricEnum = Field(..., description="用量维度")
-    label: str = Field(..., description="展示标签（中文源串）")
+    label: str = Field(..., description="展示标签 i18n key")
     used: int = Field(..., description="已用量")
     limit: int = Field(..., description="额度上限（-1 表示无限制）")
-    value: str = Field(..., description="展示文案，如 2 / 10 或 无限制")
+    value: str = Field(..., description="展示值；数字比例为原样字符串，无限制等文案返回 i18n key")
     width: str = Field(..., description="进度条宽度百分比，如 20%")
 
 

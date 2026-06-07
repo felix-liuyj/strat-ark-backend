@@ -51,16 +51,21 @@ __all__ = (
 # 套餐顺序：用于判定升级 / 降级方向（与前端 PLAN_ORDER 对齐）。
 _PLAN_ORDER: dict[PlanEnum, int] = {PlanEnum.FREE: 0, PlanEnum.PRO: 1, PlanEnum.TEAM: 2}
 
-# 套餐目录种子（与前端 PLANS 常量 1:1 对齐；-1 表示无限制）。
+# 套餐目录种子（与前端 PLANS 常量 1:1 对齐；展示文案一律存 i18n key，-1 表示无限制）。
 _PLAN_SEED: list[dict] = [
     {
         "code": PlanEnum.FREE,
-        "name": "免费",
-        "tagline": "体验核心功能，仅模拟盘",
+        "name": "subscription.plan.free",
+        "tagline": "subscription.tagline.free",
         "price_monthly": 0,
         "price_yearly_per_month": 0,
         "highlight": False,
-        "features": ["1 个交易机器人", "3 个策略 · 10 次回测 / 月", "每月 20 次 AI 分析", "仅 Dry-run 模拟盘"],
+        "features": [
+            "subscription.feat.free.bots",
+            "subscription.feat.free.strategies",
+            "subscription.feat.free.ai",
+            "subscription.feat.free.dryrun",
+        ],
         "limit_bots": 1,
         "limit_strategies": 3,
         "limit_ai_analysis": 20,
@@ -69,12 +74,17 @@ _PLAN_SEED: list[dict] = [
     },
     {
         "code": PlanEnum.PRO,
-        "name": "专业版",
-        "tagline": "面向认真交易者的完整能力",
+        "name": "subscription.plan.pro",
+        "tagline": "subscription.tagline.pro",
         "price_monthly": 49,
         "price_yearly_per_month": 41,
         "highlight": True,
-        "features": ["最多 10 个交易机器人", "20 个策略 · 无限回测", "每月 300 次 AI 分析", "实盘交易 · 多交易所"],
+        "features": [
+            "subscription.feat.pro.bots",
+            "subscription.feat.pro.strategies",
+            "subscription.feat.pro.ai",
+            "subscription.feat.pro.live",
+        ],
         "limit_bots": 10,
         "limit_strategies": 20,
         "limit_ai_analysis": 300,
@@ -83,12 +93,17 @@ _PLAN_SEED: list[dict] = [
     },
     {
         "code": PlanEnum.TEAM,
-        "name": "团队版",
-        "tagline": "团队协作、更高额度与优先支持",
+        "name": "subscription.plan.team",
+        "tagline": "subscription.tagline.team",
         "price_monthly": 149,
         "price_yearly_per_month": 124,
         "highlight": False,
-        "features": ["无限交易机器人", "无限策略与回测", "每月 2000 次 AI 分析", "实盘 · 团队协作 · 优先支持"],
+        "features": [
+            "subscription.feat.team.bots",
+            "subscription.feat.team.strategies",
+            "subscription.feat.team.ai",
+            "subscription.feat.team.live",
+        ],
         "limit_bots": -1,
         "limit_strategies": -1,
         "limit_ai_analysis": 2000,
@@ -97,12 +112,12 @@ _PLAN_SEED: list[dict] = [
     },
 ]
 
-# 用量维度展示标签（中文源串）。
+# 用量维度展示标签 i18n key。
 _USAGE_LABELS: dict[UsageMetricEnum, str] = {
-    UsageMetricEnum.BOTS: "交易机器人",
-    UsageMetricEnum.STRATEGIES: "策略",
-    UsageMetricEnum.AI_ANALYSIS: "AI 分析次数",
-    UsageMetricEnum.BACKTESTS: "回测任务",
+    UsageMetricEnum.BOTS: "subscription.usage.bots",
+    UsageMetricEnum.STRATEGIES: "subscription.usage.strategies",
+    UsageMetricEnum.AI_ANALYSIS: "subscription.usage.ai",
+    UsageMetricEnum.BACKTESTS: "subscription.usage.backtests",
 }
 
 # 各套餐默认用量种子（演示数据，与前端 usageForPlan 占比一致）。
@@ -188,6 +203,7 @@ class ListPlansViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         plans = await _ensure_plans_seeded(self.db)
         self.operating_successfully([_build_plan_response(p) for p in plans])
 
@@ -201,6 +217,7 @@ class GetCurrentSubscriptionViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         user = await self.db.get(User, int(self.checker.user_id))
@@ -257,6 +274,7 @@ class ChangePlanViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         target = self.form.targetPlan
@@ -348,7 +366,7 @@ class ChangePlanViewModel(BaseViewModel):
             subscription_id=subscription_id,
             invoice_no=invoice_no,
             plan_code=plan.code,
-            item=f"{plan.name} · 订阅",
+            item="subscription.invoice.subscription",
             amount=amount,
             currency="USD",
             status=InvoiceStatusEnum.PAID,
@@ -382,6 +400,7 @@ class CancelSubscriptionViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         user = await self.db.get(User, int(self.checker.user_id))
@@ -430,6 +449,7 @@ class ListUsageViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         user = await self.db.get(User, int(self.checker.user_id))
@@ -471,7 +491,7 @@ class ListUsageViewModel(BaseViewModel):
     def _build_bar(plan: Plan, metric: UsageMetricEnum, used: int) -> UsageBarResponseData:
         limit = _metric_limit(plan, metric)
         if limit < 0:
-            value = "无限制"
+            value = "subscription.usageValue.unlimited"
             width = "100%"
         else:
             pct = 0 if limit == 0 else min(100, round(used / limit * 100))
@@ -496,6 +516,7 @@ class ListInvoicesViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         invoices = (
@@ -537,6 +558,7 @@ class DownloadInvoiceViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         invoice = await self.db.get(Invoice, self.invoice_id)

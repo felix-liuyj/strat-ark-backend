@@ -89,6 +89,7 @@ class ListSignalsViewModel(BaseViewModel):
         self.source = source
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         statement = select(Signal).where(Signal.user_id == int(self.checker.user_id))
@@ -118,6 +119,7 @@ class CreateSignalViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         symbol = self.form.symbol.strip()
@@ -160,6 +162,7 @@ class _SignalTransitionViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         signal = await self.db.get(Signal, self.signal_id)

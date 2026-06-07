@@ -41,7 +41,7 @@ class MarketOverviewResponseData(ApiResponseModel):
     btcDominance: float = Field(..., description="BTC 占比 %")
     btcDominanceChangePct: float = Field(..., description="BTC 占比变化 %")
     fearGreed: int = Field(..., description="恐惧贪婪指数")
-    fearGreedLabel: str = Field(..., description="情绪文案")
+    fearGreedLabel: str = Field(..., description="情绪 i18n key")
 
 
 class TopMoversResponseData(ApiResponseModel):

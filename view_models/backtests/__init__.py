@@ -124,6 +124,7 @@ class CreateBacktestViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         symbol = self.form.symbol.strip()
@@ -190,6 +191,7 @@ class ListBacktestsViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         tasks = (
@@ -212,6 +214,7 @@ class GetBacktestViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         task = await self.db.get(BacktestTask, self.task_id)
@@ -232,6 +235,7 @@ class ReviewBacktestViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         task = await self.db.get(BacktestTask, self.task_id)

@@ -380,7 +380,7 @@ def get_market_overview() -> MarketOverview:
         btc_dominance=54.2,
         btc_dominance_change_pct=0.3,
         fear_greed=62,
-        fear_greed_label="Greed 贪婪",
+        fear_greed_label="market.greed",
     )
 
 

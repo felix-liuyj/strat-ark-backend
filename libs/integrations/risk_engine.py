@@ -56,9 +56,9 @@ def get_risk_overview() -> RiskOverview:
         overall_status="normal",
         pending_alerts=0,
         metrics=[
-            RiskMetric(key="daily_loss", label="今日亏损", current=1.2, limit=3.0, unit="%"),
-            RiskMetric(key="drawdown", label="账户回撤", current=6.2, limit=10.0, unit="%"),
-            RiskMetric(key="exposure", label="总敞口", current=17.0, limit=60.0, unit="%"),
+            RiskMetric(key="daily_loss", label="risk.todayLoss", current=1.2, limit=3.0, unit="%"),
+            RiskMetric(key="drawdown", label="risk.accountDrawdown", current=6.2, limit=10.0, unit="%"),
+            RiskMetric(key="exposure", label="risk.totalExposure", current=17.0, limit=60.0, unit="%"),
         ],
     )
 

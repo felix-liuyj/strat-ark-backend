@@ -41,7 +41,7 @@ router = APIRouter()
     response_model=BaseResponseModel[None],
     summary="发送验证码",
     description="向指定邮箱发送注册或密码重置验证码，验证码有效期 5 分钟，60 秒内不可重复发送。",
-    tags=["认证 Auth"],
+    tags=["StratArk/认证 Auth"],
 )
 async def send_verification_code(
     request: Request,
@@ -56,7 +56,7 @@ async def send_verification_code(
     response_model=BaseResponseModel[AuthTokenResponseData],
     summary="注册账号",
     description="通过邮箱和验证码注册新账号，注册成功后直接返回访问令牌。",
-    tags=["认证 Auth"],
+    tags=["StratArk/认证 Auth"],
 )
 async def register(
     request: Request,
@@ -71,7 +71,7 @@ async def register(
     response_model=BaseResponseModel[AuthTokenResponseData],
     summary="登录",
     description="通过邮箱和密码登录，返回访问令牌和刷新令牌。",
-    tags=["认证 Auth"],
+    tags=["StratArk/认证 Auth"],
 )
 async def login(
     request: Request,
@@ -86,7 +86,7 @@ async def login(
     response_model=BaseResponseModel[AuthTokenResponseData],
     summary="刷新令牌",
     description="使用刷新令牌换取新的访问令牌。",
-    tags=["认证 Auth"],
+    tags=["StratArk/认证 Auth"],
 )
 async def refresh_token(
     request: Request,
@@ -101,7 +101,7 @@ async def refresh_token(
     response_model=BaseResponseModel[None],
     summary="重置密码",
     description="通过邮箱验证码重置账号密码。",
-    tags=["认证 Auth"],
+    tags=["StratArk/认证 Auth"],
 )
 async def reset_password(
     request: Request,
@@ -116,7 +116,7 @@ async def reset_password(
     response_model=BaseResponseModel[None],
     summary="修改密码",
     description="登录状态下，通过旧密码验证后修改新密码。",
-    tags=["认证 Auth"],
+    tags=["StratArk/认证 Auth"],
 )
 async def change_password(
     request: Request,
@@ -132,7 +132,7 @@ async def change_password(
     response_model=BaseResponseModel[UserProfileResponseData],
     summary="获取当前用户信息",
     description="获取当前登录用户的基本信息。",
-    tags=["认证 Auth"],
+    tags=["StratArk/认证 Auth"],
 )
 async def get_current_user(
     request: Request,
@@ -147,7 +147,7 @@ async def get_current_user(
     response_model=BaseResponseModel[UserProfileResponseData],
     summary="更新用户资料",
     description="登录状态下更新显示名称和头像 URL。",
-    tags=["认证 Auth"],
+    tags=["StratArk/认证 Auth"],
 )
 async def update_profile(
     request: Request,
@@ -166,7 +166,7 @@ async def update_profile(
         "仅管理员可调用。返回所有 is_active 用户摘要 (id / 邮箱 / 显示名 / 用户类型 / 头像), "
         "供 ProjectList 用户文件夹九宫格 + 所有用户弹窗消费。"
     ),
-    tags=["认证 Auth"],
+    tags=["StratArk/认证 Auth"],
 )
 async def list_users(
     request: Request,

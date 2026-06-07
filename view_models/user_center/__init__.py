@@ -81,6 +81,7 @@ class ListApiKeysViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         now = datetime.now(UTC)
         keys = (
@@ -126,6 +127,7 @@ class CreateApiKeyViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -182,6 +184,7 @@ class RevokeApiKeyViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -210,6 +213,7 @@ class ListOAuthBindingsViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -259,6 +263,7 @@ class BindOAuthViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
         provider = self.form.provider
@@ -318,6 +323,7 @@ class UnbindOAuthViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -349,6 +355,7 @@ class ListSessionsViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         sessions = (
             await self.db.scalars(
@@ -391,6 +398,7 @@ class LogoutSessionViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -426,6 +434,7 @@ class LogoutAllSessionsViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
@@ -459,6 +468,7 @@ class GetTwoFactorViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
 
         state = await _load_two_factor(self.db, int(self.checker.user_id))
@@ -490,6 +500,7 @@ class UpdateTwoFactorViewModel(BaseViewModel):
         self.db = db
 
     async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 

@@ -460,7 +460,7 @@ enable_and_start() {
 
     sleep 2
     if systemctl is-active --quiet "$APP_NAME"; then
-        info "服务已启动 ✓"
+        info "服务已启动"
         systemctl status "$APP_NAME" --no-pager -l
     else
         error "服务启动失败，请查看日志: journalctl -u ${APP_NAME} -f"
@@ -511,7 +511,7 @@ main() {
     info ""
 
     if [[ ! -f "${APP_DIR}/.env" ]] || grep -q "your-" "${APP_DIR}/.env" 2>/dev/null; then
-        warn "⚠  请编辑 ${APP_DIR}/.env 填写实际配置后重启服务"
+        warn "请编辑 ${APP_DIR}/.env 填写实际配置后重启服务"
     fi
 }
 
