@@ -10,11 +10,15 @@ import unittest
 import warnings
 
 from fastapi.routing import APIRoute
+from starlette.requests import Request
 
 from libs.auth.jwt import create_access_token
 from libs.auth.permissions import PermissionChecker
+from libs.response import ResponseStatusCodeEnum, create_response
 from main import app
 from models.account import UserTypeEnum
+from view_models.audit import ListAuditLogsViewModel
+from view_models.engine import ListEnginesViewModel
 
 warnings.filterwarnings("ignore", message="The HMAC key is .*", category=Warning)
 
@@ -85,6 +89,30 @@ def _route_methods() -> set[tuple[str, str]]:
     return pairs
 
 
+def _request(path: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "headers": [],
+            "query_string": b"",
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "client": ("testclient", 50000),
+        }
+    )
+
+
+async def _load_checker(user_type: UserTypeEnum) -> PermissionChecker:
+    checker = PermissionChecker()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        token = create_access_token(user_id="2", user_type=user_type)
+        await checker.load_from_token(token)
+    return checker
+
+
 class PlatformContractTest(unittest.TestCase):
     def test_required_route_surface_is_registered(self) -> None:
         registered = _route_methods()
@@ -130,6 +158,31 @@ class PlatformContractTest(unittest.TestCase):
         self.assertEqual(UserTypeEnum.ADMIN, admin.user_type)
         self.assertTrue(client.is_authenticated)
         self.assertEqual(UserTypeEnum.CLIENT, client.user_type)
+
+    def test_admin_view_models_forbid_client_user(self) -> None:
+        async def guard_codes() -> list[ResponseStatusCodeEnum]:
+            checker = await _load_checker(UserTypeEnum.CLIENT)
+            engine = await create_response(
+                ListEnginesViewModel, _request("/engines"), None, checker=checker
+            )
+            audit = await create_response(
+                ListAuditLogsViewModel,
+                _request("/audit-logs"),
+                None,
+                checker=checker,
+                category=None,
+                role=None,
+                start_time=None,
+                end_time=None,
+                page_no=1,
+                page_size=20,
+            )
+            return [engine.code, audit.code]
+
+        self.assertEqual(
+            [ResponseStatusCodeEnum.FORBIDDEN, ResponseStatusCodeEnum.FORBIDDEN],
+            asyncio.run(guard_codes()),
+        )
 
 
 if __name__ == "__main__":
