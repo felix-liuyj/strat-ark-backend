@@ -124,7 +124,7 @@ strat-ark-backend/
 - **平台审计**：append-only + sha256 链式签名（可校验、不可篡改），危险运维操作自动留痕。
 - **订阅计费（模拟）**：套餐 / 用量 / 账单；升级降级取消仅更新本地订阅与 `users.plan`，**绝不接入真实支付**。
 - **统一响应契约 + 全局异常处理**：`operating_successfully` / `not_found` / `forbidden` 等；401/403/422/500 收敛为业务响应。
-- **OSS 直传**：预签名 PUT + confirm 设置 ACL。
+- **OSS 直传**：`/common/oss/presign` + `/common/oss/confirm`，目录和扩展名白名单校验后再签发 PUT URL。
 
 ## 外部集成（stub）
 
@@ -152,12 +152,12 @@ FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy 2.0（异步）· PostgreSQL（p
 | 分组 | 关键变量 | 说明 |
 |---|---|---|
 | 应用运行 | `APP_*` | 服务名、环境、监听地址和调试开关 |
-| Web 入口与跨域 | `FRONTEND_DOMAIN`、`CORS_ORIGINS` | 前端入口和 CORS 白名单 |
+| Web 跨域 | `CORS_ORIGINS` | 前端来源白名单 |
 | 数据库 | `DATABASE_URL`、`DATABASE_SCHEMA` | PostgreSQL 连接与 schema |
 | Redis | `REDIS_*` | 缓存与会话相关 Redis 连接 |
 | JWT 与管理员 | `JWT_*`、`ADMIN_EMAIL_SUFFIXES` | 自家 session 与管理员邮箱后缀 |
 | 业务敏感数据加密 | `ENCRYPT_KEY` | 交易所和网关密钥入库加密，生产必须注入强随机值 |
-| 阿里云 OSS | `ALI_OSS_*`、`BRAND_LOGO_OSS_PATH` | 文件上传和邮件 logo 公开地址 |
+| 阿里云 OSS | `ALI_OSS_*`、`BRAND_LOGO_OSS_PATH` | 文件上传和邮件 logo 公开地址；上传目录规则在 `libs/upload_rules.py` |
 | SMTP 邮件 | `SMTP_*` | 邮件验证码发送 |
 | 行情数据源 | `MARKET_DATA_*` | 行情 REST / WS 数据源，留空走 stub |
 | Kubernetes 运维 | `K8S_*` | 引擎集群状态与运维配置 |

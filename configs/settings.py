@@ -19,7 +19,6 @@ class Settings(BaseSettings):
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
     APP_DEBUG: bool = True
-    FRONTEND_DOMAIN: str = "http://localhost:3000"
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     DATABASE_URL: str = "postgresql+psycopg://postgres:postgres@127.0.0.1:5432/strat_ark"

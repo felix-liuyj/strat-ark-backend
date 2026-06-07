@@ -66,7 +66,7 @@ _ENGINE_DEFAULTS: dict[EngineKindEnum, dict[str, Any]] = {
         "connection_config": {
             "serviceUrl": "http://freqtrade-orchestrator.stratark-prod.svc.cluster.local:8080",
             "healthPath": "/api/v1/ping",
-            "restApiToken": "ft_tok_secret_3f9a",
+            "restApiToken": "",
             "timeout": 30,
             "retries": 3,
             "mtls": True,
@@ -97,7 +97,7 @@ _ENGINE_DEFAULTS: dict[EngineKindEnum, dict[str, Any]] = {
             "timeout": 60,
             "gatewayProvider": "Anthropic",
             "gatewayEndpoint": "https://api.anthropic.com",
-            "apiKey": "sk-ant-secret-7f3a",
+            "apiKey": "",
         },
         "deployment_config": {
             "image": "stratark/tradingagents-api:2026.4.0",

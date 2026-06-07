@@ -58,7 +58,7 @@ _LLM_DEFAULTS: dict[str, Any] = {
     "temperature": "0.3",
     "maxTokens": "4096",
     "endpoint": "https://api.anthropic.com",
-    "apiKey": "sk-ant-0000000000007f3a",
+    "apiKey": "",
     "monthlyTokenQuota": 10_000_000,
     "monthlyAnalysisQuota": 300,
 }
@@ -111,6 +111,8 @@ _PROMPT_SEED: list[dict[str, Any]] = [
 def _mask_secret(value: Any) -> str:
     """掩码敏感字符串：保留前缀与尾 4 位，中间以圆点替代。"""
     text = str(value or "")
+    if not text:
+        return ""
     if len(text) <= 8:
         return "••••"
     head = text[:6]

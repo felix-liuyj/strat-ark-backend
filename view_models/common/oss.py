@@ -6,6 +6,7 @@ from forms.common.oss import ConfirmForm, PresignPutForm
 from libs.auth.permissions import PermissionChecker
 from libs.ctrl.cloud.oss import AliCloudOssBucketController
 from libs.sso import generate_un_auth_exception
+from libs.upload_rules import validate_object_key_directory, validate_upload_request
 from responses.common.oss import PresignPutResponseData
 from view_models.common.base import BaseViewModel
 
@@ -29,16 +30,28 @@ class CreatePresignPutViewModel(BaseViewModel):
         if not self.checker.is_authenticated:
             raise generate_un_auth_exception()
 
+        try:
+            upload = validate_upload_request(
+                self.form.directory,
+                self.form.filename,
+                self.form.contentType,
+            )
+        except ValueError as exc:
+            self.illegal_parameters(str(exc))
+            return
+
         async with AliCloudOssBucketController() as oss:
             uploadUrl, fileUrl, ossPath, contentType = await oss.generate_presign_put(
-                self.form.filename,
-                content_type=self.form.contentType,
-                directory=self.form.directory,
+                upload.filename,
+                content_type=upload.content_type,
+                directory=upload.directory,
             )
 
         self.operating_successfully(
             PresignPutResponseData(
+                objectKey=ossPath,
                 uploadUrl=uploadUrl,
+                publicUrl=fileUrl,
                 fileUrl=fileUrl,
                 ossPath=ossPath,
                 contentType=contentType,
@@ -63,7 +76,13 @@ class ConfirmViewModel(BaseViewModel):
         if not self.checker.is_authenticated:
             raise generate_un_auth_exception()
 
+        try:
+            oss_path = validate_object_key_directory(self.form.ossPath)
+        except ValueError as exc:
+            self.illegal_parameters(str(exc))
+            return
+
         async with AliCloudOssBucketController() as oss:
-            await oss.confirm_object_acl(self.form.ossPath)
+            await oss.confirm_object_acl(oss_path)
 
         self.operating_successfully(None)

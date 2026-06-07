@@ -22,7 +22,7 @@ __all__ = (
 class ConfigGroupResponseData(ApiResponseModel):
     """单个配置分组的全部配置项。
 
-    items 为 key -> value 字典；LLM 分组中 apiKey 已掩码（如 sk-ant-••••7f3a）。
+    items 为 key -> value 字典；LLM 分组中 apiKey 已掩码，未配置时返回空字符串。
     """
 
     group: SystemConfigGroupEnum = Field(..., description="配置分组")

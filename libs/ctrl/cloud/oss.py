@@ -8,17 +8,21 @@ import base64
 import hashlib
 import hmac as hmac_module
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from urllib.parse import quote, urlparse
-from uuid import uuid4
 
 from oss2 import Auth, Bucket
 from pydantic import HttpUrl
 from starlette.concurrency import run_in_threadpool
 
 from configs import get_settings
+from libs.upload_rules import (
+    build_upload_object_key,
+    validate_object_key_directory,
+    validate_upload_request,
+)
 
 __all__ = (
     "AliCloudOssBucketController",
@@ -141,12 +145,8 @@ class AliCloudOssBucketController(Bucket):
 
     def build_oss_path(self, filename: str | None = None, directory: str = "common") -> str:
         """构建 OSS 路径，每次调用生成唯一路径"""
-        ext = self.get_file_suffix(filename)
-        return self._PATH_TEMPLATE.format(
-            directory=directory.strip().strip("/") or "common",
-            id=uuid4().hex,
-            ext=ext,
-        )
+        upload = validate_upload_request(directory, filename or "upload.jpg")
+        return build_upload_object_key(upload.directory, upload.extension)
 
     def public_url(self, oss_path: str) -> str:
         """拼接公开访问 URL"""
@@ -170,8 +170,9 @@ class AliCloudOssBucketController(Bucket):
             (upload_url, file_url, oss_path, content_type)
         """
         await self.login()
-        oss_path = self.build_oss_path(filename, directory=directory)
-        resolved_content_type = content_type.strip() or self._guess_content_type(filename)
+        upload = validate_upload_request(directory, filename, content_type)
+        oss_path = build_upload_object_key(upload.directory, upload.extension)
+        resolved_content_type = upload.content_type
 
         expires_ts = int(datetime.now().timestamp()) + expire
         string_to_sign = f"PUT\n\n{resolved_content_type}\n{expires_ts}\n/{self.bucket_name}/{oss_path}"
@@ -211,7 +212,8 @@ class AliCloudOssBucketController(Bucket):
     async def confirm_object_acl(self, oss_path: str) -> None:
         """将已上传的 OSS 对象设置为公开可读（兜底确认步骤）"""
         await self.login()
-        await run_in_threadpool(self.put_object_acl, oss_path, "public-read")
+        validated_path = validate_object_key_directory(oss_path)
+        await run_in_threadpool(self.put_object_acl, validated_path, "public-read")
 
     async def upload_bytes(
         self,
@@ -230,8 +232,9 @@ class AliCloudOssBucketController(Bucket):
         文件名退化为 OSS 路径上的 UUID。
         """
         await self.login()
-        oss_path = self.build_oss_path(filename, directory=directory)
-        resolved_content_type = content_type.strip() or self._guess_content_type(filename)
+        upload = validate_upload_request(directory, filename, content_type)
+        oss_path = build_upload_object_key(upload.directory, upload.extension)
+        resolved_content_type = upload.content_type
         headers = {
             "Content-Type": resolved_content_type,
             "x-oss-object-acl": "public-read",
@@ -252,10 +255,11 @@ class AliCloudOssBucketController(Bucket):
             (upload_fields_dict, file_url, oss_path)
         """
         await self.login()
-        oss_path = self.build_oss_path(filename)
-        expiration = datetime.now(datetime.UTC).timestamp() + expire
+        upload = validate_upload_request("common", filename)
+        oss_path = build_upload_object_key(upload.directory, upload.extension)
+        expiration = datetime.now(UTC).timestamp() + expire
         policy = {
-            "expiration": datetime.fromtimestamp(expiration, datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expiration": datetime.fromtimestamp(expiration, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "conditions": [
                 {"bucket": self.bucket_name},
                 {"key": oss_path},
@@ -297,7 +301,7 @@ class AliCloudOssBucketController(Bucket):
         """
         if url.host != self.expected_host:
             raise ValueError(f"URL 不属于当前 OSS Bucket: {url}")
-        return url.path.lstrip("/") if url.path else ""
+        return validate_object_key_directory(url.path if url.path else "")
 
     async def validate_url(self, url: HttpUrl) -> bool:
         """校验 HttpUrl 对应的文件是否存在于当前 Bucket"""
