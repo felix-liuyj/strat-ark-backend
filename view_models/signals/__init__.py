@@ -22,6 +22,7 @@ __all__ = (
     "ApproveSignalViewModel",
     "CreateSignalViewModel",
     "ExecuteSignalViewModel",
+    "GetSignalViewModel",
     "ListSignalsViewModel",
     "RejectSignalViewModel",
 )
@@ -94,7 +95,10 @@ class ListSignalsViewModel(BaseViewModel):
 
         statement = select(Signal).where(Signal.user_id == int(self.checker.user_id))
         if self.status:
-            statement = statement.where(Signal.status == self.status)
+            if self.status == "pending":
+                statement = statement.where(Signal.status.in_([SignalStatusEnum.GENERATED, SignalStatusEnum.REVIEWED]))
+            else:
+                statement = statement.where(Signal.status == self.status)
         if self.source:
             statement = statement.where(Signal.source == self.source)
         statement = statement.order_by(Signal.created_at.desc())
@@ -147,6 +151,25 @@ class CreateSignalViewModel(BaseViewModel):
         await self.db.commit()
         await self.db.refresh(signal)
 
+        self.operating_successfully(_build_signal(signal))
+
+
+class GetSignalViewModel(BaseViewModel):
+    """信号详情（仅本人可见）。"""
+
+    def __init__(self, request: Request, db: AsyncSession, signal_id: int, checker: PermissionChecker) -> None:
+        super().__init__(request=request)
+        self.signal_id = signal_id
+        self.checker = checker
+        self.db = db
+
+    async def before(self) -> None:
+        await super().before()
+        self.checker.require_auth()
+        signal = await self.db.get(Signal, self.signal_id)
+        if signal is None or signal.user_id != int(self.checker.user_id):
+            self.not_found("信号不存在")
+            return
         self.operating_successfully(_build_signal(signal))
 
 

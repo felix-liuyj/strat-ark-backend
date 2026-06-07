@@ -10,7 +10,11 @@ from fastapi import Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from forms.exchange import ExchangeAccountCreateForm, ExchangeAccountUpdateForm
+from forms.exchange import (
+    ExchangeAccountCreateForm,
+    ExchangeAccountUpdateForm,
+    ExchangeConnectionTestForm,
+)
 from libs.auth.permissions import PermissionChecker
 from libs.integrations import exchange as exchange_service
 from models.exchange import (
@@ -35,6 +39,7 @@ __all__ = (
     "SetDefaultExchangeAccountViewModel",
     "SyncExchangeBalanceViewModel",
     "TestExchangeConnectionViewModel",
+    "TestRawExchangeConnectionViewModel",
     "UpdateExchangeAccountViewModel",
 )
 
@@ -155,9 +160,7 @@ class CreateExchangeAccountViewModel(_AuthedExchangeViewModel):
             return
 
         # 通过 service 做连接测试 + 权限探测，回填安全检查位（mock）。
-        connection = exchange_service.test_connection(
-            self.form.provider.value, self.form.apiKey, self.form.apiSecret
-        )
+        connection = exchange_service.test_connection(self.form.provider.value, self.form.apiKey, self.form.apiSecret)
         permissions = exchange_service.fetch_permissions(
             self.form.provider.value, self.form.apiKey, self.form.apiSecret
         )
@@ -296,14 +299,32 @@ class TestExchangeConnectionViewModel(_AuthedExchangeViewModel):
             return
 
         result = exchange_service.test_connection(account.provider.value, account.api_key_mask, "")
-        self.operating_successfully(
-            ExchangeConnectionTestResponseData(
-                ok=result.ok,
-                latencyMs=result.latency_ms,
-                message=result.message,
-                permissionSafe=result.permission_safe,
-            )
+        self.operating_successfully(_build_connection_response(result))
+
+
+class TestRawExchangeConnectionViewModel(_AuthedExchangeViewModel):
+    """未保存账户连接测试（不入库、不持久化凭证）。"""
+
+    def __init__(
+        self,
+        request: Request,
+        db: AsyncSession,
+        form: ExchangeConnectionTestForm,
+        checker: PermissionChecker,
+    ) -> None:
+        super().__init__(request=request, db=db, checker=checker)
+        self.form = form
+
+    async def before(self) -> None:
+        await super().before()
+        self.checker.require_auth()
+        if not self.form.apiKey.strip() or not self.form.apiSecret.strip():
+            self.illegal_parameters("API Key 与 Secret 不能为空")
+            return
+        result = exchange_service.test_connection(
+            self.form.provider.value, self.form.apiKey, self.form.apiSecret
         )
+        self.operating_successfully(_build_connection_response(result))
 
 
 class SyncExchangeBalanceViewModel(_AuthedExchangeViewModel):
@@ -412,3 +433,14 @@ class SetDefaultExchangeAccountViewModel(_AuthedExchangeViewModel):
         await self.db.commit()
         await self.db.refresh(account)
         self.operating_successfully(_build_account_data(account))
+
+
+def _build_connection_response(
+    result: exchange_service.ExchangeConnectionResult,
+) -> ExchangeConnectionTestResponseData:
+    return ExchangeConnectionTestResponseData(
+        ok=result.ok,
+        latencyMs=result.latency_ms,
+        message=result.message,
+        permissionSafe=result.permission_safe,
+    )

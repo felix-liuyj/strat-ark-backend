@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from forms.settings import (
     ClearDataForm,
     ExportDataForm,
+    LlmConnectionTestForm,
     PromptTemplateForm,
     UpdateConfigGroupForm,
 )
@@ -15,6 +16,7 @@ from libs.response import BaseResponseModel, create_response
 from responses.settings import (
     ConfigGroupResponseData,
     DataActionResponseData,
+    LlmConnectionTestResponseData,
     PromptTemplateResponseData,
     SettingsOverviewResponseData,
 )
@@ -24,6 +26,7 @@ from view_models.settings import (
     DeletePromptTemplateViewModel,
     ExportDataViewModel,
     GetSettingsOverviewViewModel,
+    TestLlmConnectionViewModel,
     UpdateConfigGroupViewModel,
     UpdatePromptTemplateViewModel,
 )
@@ -62,6 +65,22 @@ async def update_config_group(
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
     return await create_response(UpdateConfigGroupViewModel, request, db, checker=checker, form=form)
+
+
+@router.post(
+    "/settings/llm/test",
+    response_model=BaseResponseModel[LlmConnectionTestResponseData],
+    summary="测试 LLM 网关连接",
+    description="使用提交的 provider / endpoint / apiKey 测试模型网关；apiKey 留空或为掩码时复用已保存配置。",
+    tags=["StratArk/系统设置"],
+)
+async def test_llm_connection(
+    request: Request,
+    form: LlmConnectionTestForm,
+    checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
+) -> BaseResponseModel:
+    return await create_response(TestLlmConnectionViewModel, request, db, checker=checker, form=form)
 
 
 @router.post(
@@ -112,9 +131,7 @@ async def delete_prompt_template(
     checker: PermissionChecker = Depends(get_permission_checker),
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(
-        DeletePromptTemplateViewModel, request, db, template_id=template_id, checker=checker
-    )
+    return await create_response(DeletePromptTemplateViewModel, request, db, template_id=template_id, checker=checker)
 
 
 @router.post(

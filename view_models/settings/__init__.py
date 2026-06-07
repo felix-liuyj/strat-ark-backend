@@ -14,16 +14,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from forms.settings import (
     ClearDataForm,
     ExportDataForm,
+    LlmConnectionTestForm,
     PromptTemplateForm,
     UpdateConfigGroupForm,
 )
 from libs.auth.permissions import PermissionChecker
-from libs.integrations.data_ops import clear_data, export_data
+from libs.integrations.data_ops import clear_data, export_data, test_llm_gateway
 from models.audit_log import ActorTypeEnum, AuditActionEnum, AuditCategoryEnum
 from models.settings import SystemConfig, SystemConfigGroupEnum
 from responses.settings import (
     ConfigGroupResponseData,
     DataActionResponseData,
+    LlmConnectionTestResponseData,
     PromptTemplateResponseData,
     SettingsOverviewResponseData,
 )
@@ -35,6 +37,7 @@ __all__ = (
     "DeletePromptTemplateViewModel",
     "ExportDataViewModel",
     "GetSettingsOverviewViewModel",
+    "TestLlmConnectionViewModel",
     "UpdateConfigGroupViewModel",
     "UpdatePromptTemplateViewModel",
 )
@@ -120,15 +123,17 @@ def _mask_secret(value: Any) -> str:
     return f"{head}••••{tail}"
 
 
+def _is_masked_secret(value: str) -> bool:
+    return "•" in value or "*" in value
+
+
 def _mask_group(group: SystemConfigGroupEnum, items: dict[str, Any]) -> dict[str, Any]:
     if group != SystemConfigGroupEnum.LLM:
         return items
     return {k: (_mask_secret(v) if k in _SECRET_KEYS else v) for k, v in items.items()}
 
 
-async def _load_group(
-    db: AsyncSession, user_id: int, group: SystemConfigGroupEnum
-) -> dict[str, Any]:
+async def _load_group(db: AsyncSession, user_id: int, group: SystemConfigGroupEnum) -> dict[str, Any]:
     """读取某标量分组配置；缺失项用默认值补齐并持久化（惰性种入）。"""
     rows = (
         await db.scalars(
@@ -281,9 +286,7 @@ class UpdateConfigGroupViewModel(BaseViewModel):
         self._configure_audit(user_id, f"更新 {group.value} 配置")
         self.set_audit_resource_id(group.value)
         result = await _load_group(self.db, user_id, group)
-        self.operating_successfully(
-            ConfigGroupResponseData(group=group, items=_mask_group(group, result))
-        )
+        self.operating_successfully(ConfigGroupResponseData(group=group, items=_mask_group(group, result)))
 
     def _configure_audit(self, user_id: int, message: str) -> None:
         if self._audit_context:
@@ -333,11 +336,7 @@ class CreatePromptTemplateViewModel(BaseViewModel):
             "content": self.form.content,
             "enabled": self.form.enabled,
         }
-        self.db.add(
-            SystemConfig(
-                user_id=user_id, group=SystemConfigGroupEnum.PROMPT, key=tpl_id, value=value
-            )
-        )
+        self.db.add(SystemConfig(user_id=user_id, group=SystemConfigGroupEnum.PROMPT, key=tpl_id, value=value))
         await self.db.commit()
 
         _configure_settings_audit(self, user_id, f"新建 Prompt 模板 {name}")
@@ -406,9 +405,7 @@ class DeletePromptTemplateViewModel(BaseViewModel):
     audit_resource = "prompt_template"
     audit_enabled = True
 
-    def __init__(
-        self, request: Request, db: AsyncSession, template_id: str, checker: PermissionChecker
-    ) -> None:
+    def __init__(self, request: Request, db: AsyncSession, template_id: str, checker: PermissionChecker) -> None:
         super().__init__(request=request)
         self.template_id = template_id
         self.checker = checker
@@ -503,9 +500,50 @@ class ClearDataViewModel(BaseViewModel):
         )
 
 
-async def _get_template_row(
-    db: AsyncSession, user_id: int, template_id: str
-) -> SystemConfig | None:
+class TestLlmConnectionViewModel(BaseViewModel):
+    """测试 LLM 模型网关连接，不落库。"""
+
+    def __init__(
+        self,
+        request: Request,
+        db: AsyncSession,
+        form: LlmConnectionTestForm,
+        checker: PermissionChecker,
+    ) -> None:
+        super().__init__(request=request)
+        self.form = form
+        self.checker = checker
+        self.db = db
+
+    async def before(self) -> None:
+        await super().before()
+        self.checker.require_auth()
+        provider = self.form.provider.strip()
+        endpoint = self.form.endpoint.strip()
+        api_key = await self._resolve_api_key()
+        if not provider or not endpoint or not api_key:
+            self.illegal_parameters("Provider、Endpoint 与 API Key 不能为空")
+            return
+        result = test_llm_gateway(provider, endpoint, api_key)
+        self.operating_successfully(
+            LlmConnectionTestResponseData(
+                ok=result.ok,
+                provider=provider,
+                model=self.form.model.strip(),
+                latencyMs=result.latency_ms,
+                message=result.message,
+            )
+        )
+
+    async def _resolve_api_key(self) -> str:
+        api_key = self.form.apiKey.strip()
+        if api_key and not _is_masked_secret(api_key):
+            return api_key
+        llm = await _load_group(self.db, int(self.checker.user_id), SystemConfigGroupEnum.LLM)
+        return str(llm.get("apiKey", "")).strip()
+
+
+async def _get_template_row(db: AsyncSession, user_id: int, template_id: str) -> SystemConfig | None:
     return await db.scalar(
         select(SystemConfig).where(
             SystemConfig.user_id == user_id,
@@ -515,9 +553,7 @@ async def _get_template_row(
     )
 
 
-async def _disable_other_templates(
-    db: AsyncSession, user_id: int, *, exclude_id: str | None
-) -> None:
+async def _disable_other_templates(db: AsyncSession, user_id: int, *, exclude_id: str | None) -> None:
     """把同组其它启用模板置为停用，保证单一启用模板。"""
     rows = (
         await db.scalars(

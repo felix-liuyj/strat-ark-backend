@@ -10,6 +10,7 @@ from models.settings import SystemConfigGroupEnum
 __all__ = (
     "ClearDataForm",
     "ExportDataForm",
+    "LlmConnectionTestForm",
     "PromptTemplateForm",
     "UpdateConfigGroupForm",
 )
@@ -49,3 +50,12 @@ class ClearDataForm(ApiFormModel):
     """数据清除请求（行情缓存 / Bot 与策略等）。"""
 
     target: str = Body(..., embed=True, description="清除目标：market_cache / bots_strategies")
+
+
+class LlmConnectionTestForm(ApiFormModel):
+    """LLM 模型网关连接测试请求。"""
+
+    provider: str = Body(..., embed=True, description="模型服务商")
+    model: str = Body(..., embed=True, description="模型名称")
+    endpoint: str = Body(..., embed=True, description="模型网关地址")
+    apiKey: str = Body("", embed=True, description="API Key；留空或掩码时使用已保存配置")

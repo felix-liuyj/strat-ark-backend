@@ -8,6 +8,7 @@ from models.exchange import ExchangeProviderEnum
 __all__ = (
     "ExchangeAccountCreateForm",
     "ExchangeAccountUpdateForm",
+    "ExchangeConnectionTestForm",
 )
 
 
@@ -24,3 +25,11 @@ class ExchangeAccountUpdateForm(ApiFormModel):
     apiKey: str | None = Body(None, embed=True, description="新 API Key（留空则不更新）")
     apiSecret: str | None = Body(None, embed=True, description="新 API Secret（留空则不更新）")
     ipWhitelist: str | None = Body(None, embed=True, description="IP 白名单")
+
+
+class ExchangeConnectionTestForm(ApiFormModel):
+    """未保存账户的交易所连接测试表单。"""
+
+    provider: ExchangeProviderEnum = Body(..., embed=True, description="交易所：binance / bybit / okx")
+    apiKey: str = Body(..., embed=True, description="API Key（仅用于本次测试）")
+    apiSecret: str = Body(..., embed=True, description="API Secret（仅用于本次测试）")

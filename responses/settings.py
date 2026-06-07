@@ -14,6 +14,7 @@ from models.settings import SystemConfigGroupEnum
 __all__ = (
     "ConfigGroupResponseData",
     "DataActionResponseData",
+    "LlmConnectionTestResponseData",
     "PromptTemplateResponseData",
     "SettingsOverviewResponseData",
 )
@@ -57,3 +58,13 @@ class DataActionResponseData(ApiResponseModel):
     message: str = Field(..., description="结果说明")
     # 导出时给出占位下载地址（真实实现为 OSS 链接或文件流）。
     downloadUrl: str | None = Field(None, description="导出文件占位下载地址")
+
+
+class LlmConnectionTestResponseData(ApiResponseModel):
+    """LLM 模型网关连接测试结果。"""
+
+    ok: bool = Field(..., description="连接是否成功")
+    provider: str = Field(..., description="模型服务商")
+    model: str = Field(..., description="模型名称")
+    latencyMs: int = Field(..., description="测试延迟，单位毫秒")
+    message: str = Field(..., description="结果说明")

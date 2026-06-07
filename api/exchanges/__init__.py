@@ -3,7 +3,11 @@
 from fastapi import APIRouter, Depends, Path, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from forms.exchange import ExchangeAccountCreateForm, ExchangeAccountUpdateForm
+from forms.exchange import (
+    ExchangeAccountCreateForm,
+    ExchangeAccountUpdateForm,
+    ExchangeConnectionTestForm,
+)
 from libs.auth.permissions import PermissionChecker, get_permission_checker
 from libs.ctrl.db import get_db
 from libs.response import BaseResponseModel, create_response
@@ -21,6 +25,7 @@ from view_models.exchanges import (
     SetDefaultExchangeAccountViewModel,
     SyncExchangeBalanceViewModel,
     TestExchangeConnectionViewModel,
+    TestRawExchangeConnectionViewModel,
     UpdateExchangeAccountViewModel,
 )
 
@@ -62,6 +67,22 @@ async def create_exchange_account(
     return await create_response(CreateExchangeAccountViewModel, request, db, checker=checker, form=form)
 
 
+@router.post(
+    "/exchanges/test",
+    response_model=BaseResponseModel[ExchangeConnectionTestResponseData],
+    summary="测试未保存交易所凭证",
+    description="在添加账户前校验 API Key/Secret 可用性；仅用于本次请求，不保存凭证。",
+    tags=_TAGS,
+)
+async def test_raw_exchange_connection(
+    request: Request,
+    form: ExchangeConnectionTestForm,
+    checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
+) -> BaseResponseModel:
+    return await create_response(TestRawExchangeConnectionViewModel, request, db, checker=checker, form=form)
+
+
 @router.put(
     "/exchanges/{exchange_id}",
     response_model=BaseResponseModel[ExchangeAccountResponseData],
@@ -94,9 +115,7 @@ async def delete_exchange_account(
     checker: PermissionChecker = Depends(get_permission_checker),
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(
-        DeleteExchangeAccountViewModel, request, db, checker=checker, account_id=exchange_id
-    )
+    return await create_response(DeleteExchangeAccountViewModel, request, db, checker=checker, account_id=exchange_id)
 
 
 @router.post(
@@ -112,9 +131,7 @@ async def test_exchange_connection(
     checker: PermissionChecker = Depends(get_permission_checker),
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(
-        TestExchangeConnectionViewModel, request, db, checker=checker, account_id=exchange_id
-    )
+    return await create_response(TestExchangeConnectionViewModel, request, db, checker=checker, account_id=exchange_id)
 
 
 @router.post(
@@ -130,9 +147,7 @@ async def sync_exchange_balance(
     checker: PermissionChecker = Depends(get_permission_checker),
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(
-        SyncExchangeBalanceViewModel, request, db, checker=checker, account_id=exchange_id
-    )
+    return await create_response(SyncExchangeBalanceViewModel, request, db, checker=checker, account_id=exchange_id)
 
 
 @router.get(
@@ -148,9 +163,7 @@ async def get_exchange_permissions(
     checker: PermissionChecker = Depends(get_permission_checker),
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(
-        GetExchangePermissionViewModel, request, db, checker=checker, account_id=exchange_id
-    )
+    return await create_response(GetExchangePermissionViewModel, request, db, checker=checker, account_id=exchange_id)
 
 
 @router.post(

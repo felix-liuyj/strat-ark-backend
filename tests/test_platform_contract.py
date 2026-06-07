@@ -28,8 +28,10 @@ REQUIRED_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", "/auth/me"),
     ("POST", "/common/oss/presign"),
     ("POST", "/common/oss/confirm"),
+    ("GET", "/dashboard/overview"),
     ("GET", "/exchanges"),
     ("POST", "/exchanges"),
+    ("POST", "/exchanges/test"),
     ("POST", "/exchanges/{exchange_id}/test"),
     ("GET", "/bots"),
     ("POST", "/bots"),
@@ -59,6 +61,7 @@ REQUIRED_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", "/ai/reports"),
     ("GET", "/ai/reports/{report_id}"),
     ("GET", "/signals"),
+    ("GET", "/signals/{signal_id}"),
     ("POST", "/signals/{signal_id}/approve"),
     ("POST", "/signals/{signal_id}/reject"),
     ("POST", "/signals/{signal_id}/execute"),
@@ -80,6 +83,7 @@ REQUIRED_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", "/audit-logs/verify-chain"),
     ("GET", "/settings"),
     ("PUT", "/settings/group"),
+    ("POST", "/settings/llm/test"),
     ("GET", "/user/api-keys"),
     ("GET", "/user/oauth-bindings"),
     ("GET", "/user/two-factor"),
@@ -180,9 +184,7 @@ class PlatformContractTest(unittest.TestCase):
     def test_admin_view_models_forbid_client_user(self) -> None:
         async def guard_codes() -> list[ResponseStatusCodeEnum]:
             checker = await _load_checker(UserTypeEnum.CLIENT)
-            engine = await create_response(
-                ListEnginesViewModel, _request("/engines"), None, checker=checker
-            )
+            engine = await create_response(ListEnginesViewModel, _request("/engines"), None, checker=checker)
             audit = await create_response(
                 ListAuditLogsViewModel,
                 _request("/audit-logs"),

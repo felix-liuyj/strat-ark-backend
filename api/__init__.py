@@ -8,6 +8,7 @@ from api.auth import router as auth_router
 from api.backtests import router as backtests_router
 from api.bots import router as bots_router
 from api.common import common_router
+from api.dashboard import router as dashboard_router
 from api.engine import router as engine_router
 from api.exchanges import router as exchanges_router
 from api.market import router as market_router
@@ -25,6 +26,7 @@ __all__ = ("api_router",)
 api_router = APIRouter()
 api_router.include_router(common_router)
 api_router.include_router(auth_router)
+api_router.include_router(dashboard_router)
 api_router.include_router(exchanges_router)
 api_router.include_router(bots_router)
 api_router.include_router(strategies_router)

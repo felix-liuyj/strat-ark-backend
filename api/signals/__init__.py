@@ -12,6 +12,7 @@ from view_models.signals import (
     ApproveSignalViewModel,
     CreateSignalViewModel,
     ExecuteSignalViewModel,
+    GetSignalViewModel,
     ListSignalsViewModel,
     RejectSignalViewModel,
 )
@@ -52,6 +53,22 @@ async def create_signal(
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
     return await create_response(CreateSignalViewModel, request, db, checker=checker, form=form)
+
+
+@router.get(
+    "/signals/{signal_id}",
+    response_model=BaseResponseModel[SignalData],
+    summary="信号详情",
+    description="返回当前用户可见的单个交易信号详情，用于前端 View 操作弹窗或详情页。",
+    tags=["StratArk/信号中心"],
+)
+async def get_signal(
+    request: Request,
+    signal_id: int = Path(..., description="信号 ID"),
+    checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
+) -> BaseResponseModel:
+    return await create_response(GetSignalViewModel, request, db, signal_id=signal_id, checker=checker)
 
 
 @router.post(
