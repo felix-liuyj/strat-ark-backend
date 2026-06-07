@@ -34,6 +34,7 @@ __all__ = (
     "GetStrategyDetailViewModel",
     "ImportStrategyViewModel",
     "ListStrategiesViewModel",
+    "ListStrategyVersionsViewModel",
     "SubmitStrategyBacktestViewModel",
     "UpdateStrategyViewModel",
 )
@@ -188,6 +189,36 @@ class GetStrategyDetailViewModel(_AuthedStrategyViewModel):
             )
         ).all()
         self.operating_successfully(_build_detail(strategy, list(versions)))
+
+
+class ListStrategyVersionsViewModel(_AuthedStrategyViewModel):
+    """策略版本列表。"""
+
+    def __init__(
+        self,
+        request: Request,
+        db: AsyncSession,
+        checker: PermissionChecker,
+        strategy_id: int,
+    ) -> None:
+        super().__init__(request=request, db=db, checker=checker)
+        self.strategy_id = strategy_id
+
+    async def before(self) -> None:
+        await super().before()
+        self.checker.require_auth()
+        strategy = await self._load_visible_strategy(self.strategy_id)
+        if strategy is None:
+            self.not_found("策略不存在")
+            return
+        versions = (
+            await self.db.scalars(
+                select(StrategyVersion)
+                .where(StrategyVersion.strategy_id == strategy.id)
+                .order_by(StrategyVersion.is_current.desc(), StrategyVersion.id.desc())
+            )
+        ).all()
+        self.operating_successfully([_build_version_data(version) for version in versions])
 
 
 class CreateStrategyViewModel(_AuthedStrategyViewModel):

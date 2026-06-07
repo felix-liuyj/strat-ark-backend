@@ -31,6 +31,7 @@ REQUIRED_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/bots/{bot_id}/live-enable"),
     ("GET", "/strategies"),
     ("POST", "/strategies/import"),
+    ("GET", "/strategies/{strategy_id}/versions"),
     ("GET", "/backtests"),
     ("POST", "/backtests"),
     ("POST", "/ai/market-analysis"),

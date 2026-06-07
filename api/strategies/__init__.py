@@ -11,12 +11,14 @@ from responses.strategy import (
     StrategyBacktestSubmitResponseData,
     StrategyDetailResponseData,
     StrategyListItemResponseData,
+    StrategyVersionResponseData,
 )
 from view_models.strategies import (
     CreateStrategyViewModel,
     GetStrategyDetailViewModel,
     ImportStrategyViewModel,
     ListStrategiesViewModel,
+    ListStrategyVersionsViewModel,
     SubmitStrategyBacktestViewModel,
     UpdateStrategyViewModel,
 )
@@ -73,6 +75,24 @@ async def import_strategy(
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
     return await create_response(ImportStrategyViewModel, request, db, checker=checker, form=form)
+
+
+@router.get(
+    "/strategies/{strategy_id}/versions",
+    response_model=BaseResponseModel[list[StrategyVersionResponseData]],
+    summary="策略版本列表",
+    description="返回指定可见策略的版本记录，当前版本优先，其余按版本 ID 倒序。",
+    tags=_TAGS,
+)
+async def list_strategy_versions(
+    request: Request,
+    strategy_id: int = Path(..., description="策略 ID"),
+    checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
+) -> BaseResponseModel:
+    return await create_response(
+        ListStrategyVersionsViewModel, request, db, checker=checker, strategy_id=strategy_id
+    )
 
 
 @router.get(

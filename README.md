@@ -115,7 +115,7 @@ strat-ark-backend/
 | 设置 settings | Settings | General / LLM 网关 / Prompt 模板 / 外观 / 数据 |
 | 用户中心 user_center | User Center | 平台 API Key / 第三方账号绑定 / 活跃会话 / 2FA |
 
-共 28 张表、110 条路由；完整端点见 `/docs`。
+共 28 张表、120+ 条路由；完整端点见 `/docs`。
 
 ## 核心能力
 
