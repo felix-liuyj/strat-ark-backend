@@ -142,7 +142,7 @@ FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy 2.0（异步）· PostgreSQL（p
 - API 文档：`/docs`（Swagger）、`/redoc`
 - 容器编排（仓库根目录，base / 引擎 / 生产 override 三份）：
   - `docker-compose.yml` — base：PostgreSQL + Redis + 后端 + 前端，引擎连接留空走 stub；本地 `docker compose up -d --build`
-  - `docker-compose.engines.yml` — **两个引擎独立编排**（Freqtrade 执行引擎 + TradingAgents 投研引擎），可单独启动：`docker compose -f docker-compose.engines.yml up -d`
+  - `docker-compose.engines.yml` — **两个引擎独立编排**（Freqtrade 执行引擎 + TradingAgents 投研引擎），已按生产全面加固（非 root / read_only / cap_drop / docker secrets / 日志轮转 / 资源 limits+reservations）；可单独启动：`docker compose -f docker-compose.engines.yml up -d`。前置：将 LLM API Key 写入 `secrets/llm_api_key.txt`（应用经 `LLM_API_KEY_FILE` 读取，勿入库）
   - `docker-compose.prod.yml` — 生产 override：主栈生产化（restart / healthcheck / 资源限制，敏感值走 `.env`），并经 `include` 自动引入引擎文件；`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
 - 主机部署：[`deploy/README.md`](deploy/README.md)（systemd + Poetry）
 
