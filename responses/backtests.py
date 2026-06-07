@@ -10,6 +10,7 @@ __all__ = (
     "BacktestAiReviewData",
     "BacktestDetailData",
     "BacktestMetricsData",
+    "BacktestResultData",
     "BacktestSeriesData",
     "BacktestTaskData",
     "DailyReturnPointData",
@@ -107,3 +108,11 @@ class BacktestDetailData(ApiResponseModel):
     metrics: BacktestMetricsData | None = Field(None, description="绩效指标（完成后有值）")
     series: BacktestSeriesData | None = Field(None, description="结果序列（完成后有值）")
     aiReview: BacktestAiReviewData | None = Field(None, description="AI 复盘（生成后有值）")
+
+
+class BacktestResultData(ApiResponseModel):
+    """回测结果（任务信息 + 指标 + 序列，不含 AI 复盘）。"""
+
+    task: BacktestTaskData = Field(..., description="任务摘要")
+    metrics: BacktestMetricsData | None = Field(None, description="绩效指标（完成后有值）")
+    series: BacktestSeriesData | None = Field(None, description="结果序列（完成后有值）")

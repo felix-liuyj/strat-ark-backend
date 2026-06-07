@@ -13,6 +13,7 @@ from responses.backtests import (
     BacktestAiReviewData,
     BacktestDetailData,
     BacktestMetricsData,
+    BacktestResultData,
     BacktestSeriesData,
     BacktestTaskData,
     DailyReturnPointData,
@@ -24,6 +25,7 @@ from view_models import BaseViewModel
 
 __all__ = (
     "CreateBacktestViewModel",
+    "GetBacktestResultViewModel",
     "GetBacktestViewModel",
     "ListBacktestsViewModel",
     "ReviewBacktestViewModel",
@@ -95,6 +97,14 @@ def _build_detail(task: BacktestTask) -> BacktestDetailData:
         metrics=_build_metrics(task),
         series=_build_series(task),
         aiReview=_build_ai_review(task),
+    )
+
+
+def _build_result(task: BacktestTask) -> BacktestResultData:
+    return BacktestResultData(
+        task=_build_task_summary(task),
+        metrics=_build_metrics(task),
+        series=_build_series(task),
     )
 
 
@@ -223,6 +233,27 @@ class GetBacktestViewModel(BaseViewModel):
             return
 
         self.operating_successfully(_build_detail(task))
+
+
+class GetBacktestResultViewModel(BaseViewModel):
+    """回测任务结果（指标 + 序列）。"""
+
+    def __init__(self, request: Request, db: AsyncSession, task_id: int, checker: PermissionChecker) -> None:
+        super().__init__(request=request)
+        self.task_id = task_id
+        self.checker = checker
+        self.db = db
+
+    async def before(self) -> None:
+        await super().before()
+        self.checker.require_auth()
+
+        task = await self.db.get(BacktestTask, self.task_id)
+        if task is None or task.user_id != int(self.checker.user_id):
+            self.not_found("回测任务不存在")
+            return
+
+        self.operating_successfully(_build_result(task))
 
 
 class ReviewBacktestViewModel(BaseViewModel):

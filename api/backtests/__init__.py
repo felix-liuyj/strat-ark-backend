@@ -7,9 +7,10 @@ from forms.backtests import BacktestCreateForm
 from libs.auth.permissions import PermissionChecker, get_permission_checker
 from libs.ctrl.db import get_db
 from libs.response import BaseResponseModel, create_response
-from responses.backtests import BacktestDetailData, BacktestTaskData
+from responses.backtests import BacktestDetailData, BacktestResultData, BacktestTaskData
 from view_models.backtests import (
     CreateBacktestViewModel,
+    GetBacktestResultViewModel,
     GetBacktestViewModel,
     ListBacktestsViewModel,
     ReviewBacktestViewModel,
@@ -52,7 +53,23 @@ async def list_backtests(
 
 
 @router.get(
-    "/backtests/{backtest_id}",
+    "/backtests/{task_id}/result",
+    response_model=BaseResponseModel[BacktestResultData],
+    summary="回测结果",
+    description="返回指定回测任务的绩效指标、权益曲线、回撤、每日收益与交易对归因。",
+    tags=["StratArk/回测中心"],
+)
+async def get_backtest_result(
+    request: Request,
+    task_id: int = Path(..., description="回测任务 ID"),
+    checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
+) -> BaseResponseModel:
+    return await create_response(GetBacktestResultViewModel, request, db, task_id=task_id, checker=checker)
+
+
+@router.get(
+    "/backtests/{task_id}",
     response_model=BaseResponseModel[BacktestDetailData],
     summary="回测任务详情",
     description="返回指定回测任务的绩效指标、权益/回撤/每日收益/交易对序列与 AI 复盘。",
@@ -60,15 +77,15 @@ async def list_backtests(
 )
 async def get_backtest(
     request: Request,
-    backtest_id: int = Path(..., description="回测任务 ID"),
+    task_id: int = Path(..., description="回测任务 ID"),
     checker: PermissionChecker = Depends(get_permission_checker),
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(GetBacktestViewModel, request, db, task_id=backtest_id, checker=checker)
+    return await create_response(GetBacktestViewModel, request, db, task_id=task_id, checker=checker)
 
 
 @router.post(
-    "/backtests/{backtest_id}/ai-review",
+    "/backtests/{task_id}/ai-review",
     response_model=BaseResponseModel[BacktestDetailData],
     summary="回测 AI 复盘",
     description="对已完成的回测任务发起 TradingAgents 多智能体复盘，生成归因与改进建议。",
@@ -76,8 +93,8 @@ async def get_backtest(
 )
 async def review_backtest(
     request: Request,
-    backtest_id: int = Path(..., description="回测任务 ID"),
+    task_id: int = Path(..., description="回测任务 ID"),
     checker: PermissionChecker = Depends(get_permission_checker),
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(ReviewBacktestViewModel, request, db, task_id=backtest_id, checker=checker)
+    return await create_response(ReviewBacktestViewModel, request, db, task_id=task_id, checker=checker)
