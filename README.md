@@ -127,7 +127,7 @@ strat-ark-backend/
 - `kubernetes` / `notifier`（引擎集群运维、多渠道通知发送）
 - `billing` / `data_ops` / `oauth`（订阅计费、数据导出、第三方绑定）
 
-接入真实服务时，替换对应 stub 实现并填写 `.env` 中的集成配置；其中 **Freqtrade 执行引擎**（`FREQTRADE_ORCHESTRATOR_URL` / `FREQTRADE_API_TOKEN`）与 **TradingAgents 投研引擎**（`TRADINGAGENTS_API_URL` + `LLM_*`）已在生产编排 `docker-compose.prod.yml` 中作为独立服务接入，后端通过编排内网（`http://freqtrade:8080` / `http://tradingagents:8100`）连接。
+接入真实服务时，替换对应 stub 实现并填写 `.env` 中的集成配置；其中 **Freqtrade 执行引擎**（`FREQTRADE_ORCHESTRATOR_URL` / `FREQTRADE_API_TOKEN`）与 **TradingAgents 投研引擎**（`TRADINGAGENTS_API_URL` + `LLM_*`）已在 `docker-compose.engines.yml` 中独立编排、由生产编排 `docker-compose.prod.yml` 经 `include` 引入，后端通过编排内网（`http://freqtrade:8080` / `http://tradingagents:8100`）连接。
 
 ## 技术栈
 
@@ -140,9 +140,10 @@ FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy 2.0（异步）· PostgreSQL（p
 ## 文档与部署
 
 - API 文档：`/docs`（Swagger）、`/redoc`
-- 容器编排（仓库根目录，base + 生产 override 两份）：
+- 容器编排（仓库根目录，base / 引擎 / 生产 override 三份）：
   - `docker-compose.yml` — base：PostgreSQL + Redis + 后端 + 前端，引擎连接留空走 stub；本地 `docker compose up -d --build`
-  - `docker-compose.prod.yml` — 生产 override：叠加 **Freqtrade 执行引擎** 与 **TradingAgents 投研引擎** 两个服务，并补齐 restart / healthcheck / 资源限制，敏感值走 `.env`；`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
+  - `docker-compose.engines.yml` — **两个引擎独立编排**（Freqtrade 执行引擎 + TradingAgents 投研引擎），可单独启动：`docker compose -f docker-compose.engines.yml up -d`
+  - `docker-compose.prod.yml` — 生产 override：主栈生产化（restart / healthcheck / 资源限制，敏感值走 `.env`），并经 `include` 自动引入引擎文件；`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
 - 主机部署：[`deploy/README.md`](deploy/README.md)（systemd + Poetry）
 
 ## 联系方式
