@@ -57,16 +57,6 @@ class Settings(BaseSettings):
     SMTP_SENDER: str | None = None
     SMTP_USE_SSL: bool = True
 
-    # Freqtrade 交易执行引擎
-    FREQTRADE_ORCHESTRATOR_URL: str | None = None
-    FREQTRADE_API_TOKEN: str | None = None
-
-    # TradingAgents API 服务与 LLM 网关
-    TRADINGAGENTS_API_URL: str | None = None
-    LLM_GATEWAY_URL: str | None = None
-    LLM_API_KEY: str | None = None
-    LLM_DEFAULT_MODEL: str = "claude-sonnet"
-
     # 行情数据源
     MARKET_DATA_WS_URL: str | None = None
     MARKET_DATA_API_KEY: str | None = None

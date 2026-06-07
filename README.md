@@ -136,7 +136,10 @@ strat-ark-backend/
 - `kubernetes` / `notifier`（引擎集群运维、多渠道通知发送）
 - `billing` / `data_ops` / `oauth`（订阅计费、数据导出、第三方绑定）
 
-接入真实服务时，替换对应 stub 实现并填写 `.env` 中的集成配置；其中 **Freqtrade 执行引擎**（`FREQTRADE_ORCHESTRATOR_URL` / `FREQTRADE_API_TOKEN`）仍由 `docker-compose.engines.yml` 独立编排，**TradingAgents** 则直接作为生产 API 服务部署在 `docker-compose.prod.yml` 中。后端通过编排内网分别连接 `http://freqtrade:8080` 与 `http://tradingagents-api:8100`。
+接入真实服务时，替换对应 stub 实现，并在管理员引擎管理中维护 Freqtrade /
+TradingAgents 的连接配置、凭证、服务地址与部署参数。后端 `.env` 不再作为引擎连接
+参数的事实源；`docker-compose.engines.yml` 只负责 Freqtrade 服务编排，
+`docker-compose.prod.yml` 只负责 TradingAgents API 服务启动。
 
 ## 技术栈
 
@@ -156,11 +159,12 @@ FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy 2.0（异步）· PostgreSQL（p
 | 业务敏感数据加密 | `ENCRYPT_KEY` | 交易所和网关密钥入库加密，生产必须注入强随机值 |
 | 阿里云 OSS | `ALI_OSS_*`、`BRAND_LOGO_OSS_PATH` | 文件上传和邮件 logo 公开地址 |
 | SMTP 邮件 | `SMTP_*` | 邮件验证码发送 |
-| Freqtrade 执行引擎 | `FREQTRADE_*` | Bot 执行引擎编排，留空走 stub |
-| TradingAgents API 与 LLM | `TRADINGAGENTS_API_URL`、`LLM_*` | 投研 API 服务和大模型网关，留空走 stub |
 | 行情数据源 | `MARKET_DATA_*` | 行情 REST / WS 数据源，留空走 stub |
 | Kubernetes 运维 | `K8S_*` | 引擎集群状态与运维配置 |
 | 静态资源 | `STATIC_*` | 本地静态资源目录和访问前缀 |
+
+引擎连接配置不走后端全局环境变量。Freqtrade、TradingAgents、模型网关等服务地址、
+Token、API Key 和模型参数由管理员在引擎管理中维护，按引擎类型入库并回显掩码。
 
 通知渠道配置不走全局环境变量。Email、Telegram、Lark、Slack、Webhook、SMS、App Push
 等渠道的端点和凭证由用户在通知中心维护，后端按 `user_id + channel_kind` 独立入库并在
