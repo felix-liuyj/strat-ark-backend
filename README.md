@@ -144,7 +144,24 @@ FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy 2.0（异步）· PostgreSQL（p
 
 ## 环境变量
 
-见 [`.env.example`](.env.example)。关键项：`DATABASE_URL`、`DATABASE_SCHEMA`、`REDIS_*`、`JWT_SECRET_KEY`、`ADMIN_EMAIL_SUFFIXES`、`CORS_ORIGINS`；外部集成项（`FREQTRADE_*` / `TRADINGAGENTS_*` / `LLM_*` / `MARKET_DATA_*` / `K8S_*` / 渠道令牌）留空即用 stub。
+见 [`.env.example`](.env.example)。配置按用途分组维护，避免把不同类型的敏感值和服务地址堆在同一段：
+
+| 分组 | 关键变量 | 说明 |
+|---|---|---|
+| 应用运行 | `APP_*` | 服务名、环境、监听地址和调试开关 |
+| Web 入口与跨域 | `FRONTEND_DOMAIN`、`CORS_ORIGINS` | 前端入口和 CORS 白名单 |
+| 数据库 | `DATABASE_URL`、`DATABASE_SCHEMA` | PostgreSQL 连接与 schema |
+| Redis | `REDIS_*` | 缓存与会话相关 Redis 连接 |
+| JWT 与管理员 | `JWT_*`、`ADMIN_EMAIL_SUFFIXES` | 自家 session 与管理员邮箱后缀 |
+| 业务敏感数据加密 | `ENCRYPT_KEY` | 交易所和网关密钥入库加密，生产必须注入强随机值 |
+| 阿里云 OSS | `ALI_OSS_*`、`BRAND_LOGO_OSS_PATH` | 文件上传和邮件 logo 公开地址 |
+| SMTP 邮件 | `SMTP_*` | 邮件验证码发送 |
+| Freqtrade 执行引擎 | `FREQTRADE_*` | Bot 执行引擎编排，留空走 stub |
+| TradingAgents 与 LLM | `TRADINGAGENTS_API_URL`、`LLM_*` | 投研引擎和大模型网关，留空走 stub |
+| 行情数据源 | `MARKET_DATA_*` | 行情 REST / WS 数据源，留空走 stub |
+| Kubernetes 运维 | `K8S_*` | 引擎集群状态与运维配置 |
+| 通知渠道 | `TELEGRAM_BOT_TOKEN`、`SLACK_WEBHOOK_URL`、`LARK_WEBHOOK_URL` | 渠道发送密钥，留空不发送真实消息 |
+| 静态资源 | `STATIC_*` | 本地静态资源目录和访问前缀 |
 
 ## 文档与部署
 

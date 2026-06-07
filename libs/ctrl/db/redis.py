@@ -9,12 +9,14 @@ __all__ = ("RedisCacheController",)
 
 class RedisCacheController(Redis):
     def __init__(self) -> None:
+        settings = get_settings()
         super().__init__(
-            host=get_settings().REDIS_HOST,
-            port=get_settings().REDIS_PORT,
-            ssl=False,
-            username=get_settings().REDIS_USERNAME,
-            password=get_settings().REDIS_PASSWORD,
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            db=settings.REDIS_DB,
+            ssl=settings.REDIS_SSL,
+            username=settings.REDIS_USERNAME,
+            password=settings.REDIS_PASSWORD,
             encoding="utf-8",
             decode_responses=True,
         )

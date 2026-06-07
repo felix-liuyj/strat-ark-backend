@@ -27,14 +27,19 @@ class Settings(BaseSettings):
 
     REDIS_HOST: str = "127.0.0.1"
     REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
     REDIS_USERNAME: str | None = "default"
     REDIS_PASSWORD: str | None = None
+    REDIS_SSL: bool = False
 
     JWT_SECRET_KEY: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_DAYS: int = 7
     JWT_REFRESH_EXPIRE_DAYS: int = 30
     ADMIN_EMAIL_SUFFIXES: str = ""
+
+    # 业务敏感数据加密配置
+    ENCRYPT_KEY: str | None = None
 
     ALI_OSS_ACCESS_KEY: str | None = None
     ALI_OSS_ACCESS_SECRET: str | None = None
@@ -52,26 +57,24 @@ class Settings(BaseSettings):
     SMTP_SENDER: str | None = None
     SMTP_USE_SSL: bool = True
 
-    # ------------------------------------------------------------
-    # 外部集成（当前以 libs/integrations/* stub 实现，以下为真实接入预留；
-    # 留空时 stub 返回拟真 mock 数据，不影响本地运行与演示）。
-    # ------------------------------------------------------------
-    # 凭证加密密钥（交易所 / 网关 API Key 入库加密，stub 阶段仅掩码存储）
-    ENCRYPT_KEY: str | None = None
-    # Freqtrade 执行引擎编排
+    # Freqtrade 交易执行引擎
     FREQTRADE_ORCHESTRATOR_URL: str | None = None
     FREQTRADE_API_TOKEN: str | None = None
-    # TradingAgents 投研引擎 / LLM 网关
+
+    # TradingAgents 投研引擎与 LLM 网关
     TRADINGAGENTS_API_URL: str | None = None
     LLM_GATEWAY_URL: str | None = None
     LLM_API_KEY: str | None = None
     LLM_DEFAULT_MODEL: str = "claude-sonnet"
+
     # 行情数据源
     MARKET_DATA_WS_URL: str | None = None
     MARKET_DATA_API_KEY: str | None = None
+
     # 集群 / 引擎运维（Kubernetes）
     K8S_NAMESPACE: str = "stratark-prod"
     K8S_IN_CLUSTER: bool = False
+
     # 通知渠道（敏感值建议由运行环境注入）
     TELEGRAM_BOT_TOKEN: str | None = None
     SLACK_WEBHOOK_URL: str | None = None
