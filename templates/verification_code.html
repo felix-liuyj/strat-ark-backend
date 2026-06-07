@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width, initial-scale=1.0" name="viewport">
+</head>
+<body style="margin:0;padding:0;background-color:#f5f5f5;font-family:'PingFang SC','Microsoft YaHei',sans-serif;">
+<table cellpadding="0" cellspacing="0" style="padding:40px 20px;" width="100%">
+    <tr>
+        <td align="center">
+            <table cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);"
+                   width="480">
+                <tr>
+                    <td style="background:#ffffff;padding:32px;text-align:center;border-bottom:1px solid #eee;">
+                        {% if logo_url %}
+                        <!--
+                          OSS 公开 URL：host = ALI_OSS_BUCKET_NAME + ALI_OSS_REGION，
+                          path = BRAND_LOGO_OSS_PATH。宽度 70% 居中。
+                          BRAND_LOGO_OSS_PATH 或 OSS 配置缺失时整个 logo 区域留空。
+                        -->
+                        <img src="{{ logo_url }}" alt="{{ app_name }}" style="width:70%;height:auto;display:block;margin:0 auto;">
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding:32px;">
+                        <p style="margin:0 0 16px;color:#333;font-size:15px;">您正在进行<strong>{{ purpose }}</strong>操作，验证码如下：
+                        </p>
+                        <div style="background:#f8f8f8;border:1px solid #eee;border-radius:6px;padding:20px;text-align:center;margin:0 0 16px;">
+                            <span style="font-size:32px;font-weight:700;letter-spacing:8px;color:#f37c20;">{{ code }}</span>
+                        </div>
+                        <p style="margin:0 0 8px;color:#666;font-size:13px;">验证码有效期为 {{ expire_minutes }}
+                            分钟，请勿泄露给他人。</p>
+                        <p style="margin:0;color:#999;font-size:12px;">如非本人操作，请忽略此邮件。</p>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding:16px 32px;background:#fafafa;border-top:1px solid #eee;">
+                        <p style="margin:0;color:#bbb;font-size:11px;text-align:center;">
+                            此邮件由系统自动发送，请勿直接回复。</p>
+                    </td>
+                </tr>
+            </table>
+        </td>
+    </tr>
+</table>
+</body>
+</html>

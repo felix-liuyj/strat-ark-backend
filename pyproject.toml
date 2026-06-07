@@ -1,0 +1,64 @@
+[project]
+name = "strat-ark-backend"
+version = "0.0.1"
+description = "FastAPI 后端脚手架（ViewModel 三层架构 + JWT 认证 + 审计 + OSS）"
+authors = [{ name = "Felix Liu", email = "felixliuyj@gmail.com" }]
+requires-python = ">=3.13,<4.0"
+dependencies = [
+    # Web 框架与 API
+    "fastapi",
+    "uvicorn[standard]",
+    "jinja2",
+    "python-multipart",
+    "httpx",
+    # 数据库
+    "sqlalchemy[asyncio]>=2.0",
+    "psycopg[binary]>=3.2",
+    "greenlet>=3.0",
+    "python-dotenv",
+    # 数据验证与配置
+    "pydantic",
+    "pydantic-settings",
+    # 认证与安全
+    "pyjwt",
+    "cryptography",
+    "bcrypt",
+    # 缓存
+    "redis",
+    # 异步邮件
+    "aiosmtplib",
+    # 阿里云 OSS
+    "oss2",
+]
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.group.dev.dependencies]
+ruff = "*"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+# E/F/W 默认开；额外开 UP（pyupgrade）/FA（future-annotations）/SIM（simplify）
+# /C4（comprehensions）/B（bugbear）/RUF（ruff 自有规则）/I（isort）
+select = ["E", "F", "W", "UP", "FA", "SIM", "C4", "B", "RUF", "I"]
+ignore = [
+    # FastAPI 标准用法：Depends/Body/Query 等都依赖 default-call 模式
+    "B008",
+    # 中文文案里的全角标点（，；："）会被误报为可疑字符
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[[tool.poetry.source]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+priority = "primary"
+
+[build-system]
+requires = ["poetry-core>=1.4.0"]
+build-backend = "poetry.core.masonry.api"
