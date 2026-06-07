@@ -48,6 +48,15 @@ poetry run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 > 表结构在应用启动（lifespan `init_db`）时自动创建（多 worker 用 PG advisory lock 串行化），无需手动迁移。
 
+### 质量门禁
+
+```sh
+poetry run ruff check .
+poetry run python -m unittest discover -s tests -v
+```
+
+`tests/test_platform_contract.py` 是无外部依赖的 smoke contract：不触发 lifespan，不要求 PostgreSQL / Redis 在线；用于验证 FastAPI app 可导入、平台核心模块路由已注册、REST 路径无 `/search` / `/list` / `/create` 反模式、OpenAPI 可生成以及 JWT 角色解析可用。
+
 ## 演示账号
 
 `scripts/seed` 写入三个与前端 mock 对齐的角色账号（统一密码 `strategy123`）：
