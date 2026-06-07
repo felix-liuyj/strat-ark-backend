@@ -33,6 +33,8 @@ docker compose exec backend python -m scripts.seed   # 写入演示账号 + 内�
 - 前端：<http://localhost:3000>
 - 后端 API 文档：<http://localhost:8000/docs>
 
+> 含 Freqtrade / TradingAgents 两个引擎的生产编排，见[文档与部署](#文档与部署)。
+
 ### 方式二：本地开发
 
 环境要求：Python 3.13+、Poetry、PostgreSQL（驱动固定 `postgresql+psycopg://`）、Redis。
@@ -125,7 +127,7 @@ strat-ark-backend/
 - `kubernetes` / `notifier`（引擎集群运维、多渠道通知发送）
 - `billing` / `data_ops` / `oauth`（订阅计费、数据导出、第三方绑定）
 
-接入真实服务时，仅需替换对应 stub 实现并填写 `.env` 中的集成配置。
+接入真实服务时，替换对应 stub 实现并填写 `.env` 中的集成配置；其中 **Freqtrade 执行引擎**（`FREQTRADE_ORCHESTRATOR_URL` / `FREQTRADE_API_TOKEN`）与 **TradingAgents 投研引擎**（`TRADINGAGENTS_API_URL` + `LLM_*`）已在生产编排 `docker-compose.prod.yml` 中作为独立服务接入，后端通过编排内网（`http://freqtrade:8080` / `http://tradingagents:8100`）连接。
 
 ## 技术栈
 
@@ -138,7 +140,10 @@ FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy 2.0（异步）· PostgreSQL（p
 ## 文档与部署
 
 - API 文档：`/docs`（Swagger）、`/redoc`
-- 部署：[`deploy/README.md`](deploy/README.md)（systemd + Poetry）、根目录 `docker-compose.yml`（全栈）
+- 容器编排（仓库根目录，base + 生产 override 两份）：
+  - `docker-compose.yml` — base：PostgreSQL + Redis + 后端 + 前端，引擎连接留空走 stub；本地 `docker compose up -d --build`
+  - `docker-compose.prod.yml` — 生产 override：叠加 **Freqtrade 执行引擎** 与 **TradingAgents 投研引擎** 两个服务，并补齐 restart / healthcheck / 资源限制，敏感值走 `.env`；`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
+- 主机部署：[`deploy/README.md`](deploy/README.md)（systemd + Poetry）
 
 ## 联系方式
 
