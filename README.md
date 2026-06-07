@@ -33,7 +33,7 @@ docker compose exec backend python -m scripts.seed   # 写入演示账号 + 内�
 - 前端：<http://localhost:3000>
 - 后端 API 文档：<http://localhost:8000/docs>
 
-> 含 Freqtrade / TradingAgents 两个引擎的生产编排，见[文档与部署](#文档与部署)。
+> 生产编排包含 Freqtrade 执行引擎与 TradingAgents API 服务，见[文档与部署](#文档与部署)。
 
 ### 方式二：本地开发
 
@@ -136,7 +136,7 @@ strat-ark-backend/
 - `kubernetes` / `notifier`（引擎集群运维、多渠道通知发送）
 - `billing` / `data_ops` / `oauth`（订阅计费、数据导出、第三方绑定）
 
-接入真实服务时，替换对应 stub 实现并填写 `.env` 中的集成配置；其中 **Freqtrade 执行引擎**（`FREQTRADE_ORCHESTRATOR_URL` / `FREQTRADE_API_TOKEN`）与 **TradingAgents 投研引擎**（`TRADINGAGENTS_API_URL` + `LLM_*`）已在 `docker-compose.engines.yml` 中独立编排、由生产编排 `docker-compose.prod.yml` 经 `include` 引入，后端通过编排内网（`http://freqtrade:8080` / `http://tradingagents:8100`）连接。
+接入真实服务时，替换对应 stub 实现并填写 `.env` 中的集成配置；其中 **Freqtrade 执行引擎**（`FREQTRADE_ORCHESTRATOR_URL` / `FREQTRADE_API_TOKEN`）仍由 `docker-compose.engines.yml` 独立编排，**TradingAgents** 则直接作为生产 API 服务部署在 `docker-compose.prod.yml` 中。后端通过编排内网分别连接 `http://freqtrade:8080` 与 `http://tradingagents-api:8100`。
 
 ## 技术栈
 
@@ -157,7 +157,7 @@ FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy 2.0（异步）· PostgreSQL（p
 | 阿里云 OSS | `ALI_OSS_*`、`BRAND_LOGO_OSS_PATH` | 文件上传和邮件 logo 公开地址 |
 | SMTP 邮件 | `SMTP_*` | 邮件验证码发送 |
 | Freqtrade 执行引擎 | `FREQTRADE_*` | Bot 执行引擎编排，留空走 stub |
-| TradingAgents 与 LLM | `TRADINGAGENTS_API_URL`、`LLM_*` | 投研引擎和大模型网关，留空走 stub |
+| TradingAgents API 与 LLM | `TRADINGAGENTS_API_URL`、`LLM_*` | 投研 API 服务和大模型网关，留空走 stub |
 | 行情数据源 | `MARKET_DATA_*` | 行情 REST / WS 数据源，留空走 stub |
 | Kubernetes 运维 | `K8S_*` | 引擎集群状态与运维配置 |
 | 通知渠道 | `TELEGRAM_BOT_TOKEN`、`SLACK_WEBHOOK_URL`、`LARK_WEBHOOK_URL` | 渠道发送密钥，留空不发送真实消息 |
@@ -166,10 +166,10 @@ FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy 2.0（异步）· PostgreSQL（p
 ## 文档与部署
 
 - API 文档：`/docs`（Swagger）、`/redoc`
-- 容器编排（仓库根目录，base / 引擎 / 生产 override 三份）：
+- 容器编排（仓库根目录，base / Freqtrade 引擎 / 生产 override 三份）：
   - `docker-compose.yml` — base：PostgreSQL + Redis + 后端 + 前端，引擎连接留空走 stub；本地 `docker compose up -d --build`
-  - `docker-compose.engines.yml` — **两个引擎独立编排**（Freqtrade 执行引擎 + TradingAgents 投研引擎），已按生产全面加固（非 root / read_only / cap_drop / docker secrets / 日志轮转 / 资源 limits+reservations）；可单独启动：`docker compose -f docker-compose.engines.yml up -d`。前置：将 LLM API Key 写入 `secrets/llm_api_key.txt`（应用经 `LLM_API_KEY_FILE` 读取，勿入库）
-  - `docker-compose.prod.yml` — 生产 override：主栈生产化（restart / healthcheck / 资源限制，敏感值走 `.env`），并经 `include` 自动引入引擎文件；`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
+  - `docker-compose.engines.yml` — **Freqtrade 执行引擎独立编排**，已按生产全面加固（非 root / read_only / cap_drop / 日志轮转 / 资源 limits+reservations）；可单独启动：`docker compose -f docker-compose.engines.yml up -d`
+  - `docker-compose.prod.yml` — 生产 override：主栈生产化，并经 `include` 自动引入 Freqtrade；TradingAgents 直接部署为 `tradingagents-api` API 服务；`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
 - 主机部署：[`deploy/README.md`](deploy/README.md)（systemd + Poetry）
 
 ## 联系方式

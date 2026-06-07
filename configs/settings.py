@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     FREQTRADE_ORCHESTRATOR_URL: str | None = None
     FREQTRADE_API_TOKEN: str | None = None
 
-    # TradingAgents 投研引擎与 LLM 网关
+    # TradingAgents API 服务与 LLM 网关
     TRADINGAGENTS_API_URL: str | None = None
     LLM_GATEWAY_URL: str | None = None
     LLM_API_KEY: str | None = None

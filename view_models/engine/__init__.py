@@ -86,11 +86,11 @@ _ENGINE_DEFAULTS: dict[EngineKindEnum, dict[str, Any]] = {
         },
     },
     EngineKindEnum.TRADINGAGENTS: {
-        "name": "TradingAgents 投研引擎",
-        "deployment_name": "tradingagents-worker",
+        "name": "TradingAgents API 服务",
+        "deployment_name": "tradingagents-api",
         "replicas_desired": 4,
         "connection_config": {
-            "serviceUrl": "http://tradingagents-worker.stratark-prod.svc.cluster.local:9100",
+            "serviceUrl": "http://tradingagents-api.stratark-prod.svc.cluster.local:8100",
             "redisUrl": "redis://redis.stratark-prod.svc:6379/2",
             "vectorStore": "postgres://pgvector.stratark-prod:5432/agents",
             "marketFeed": "wss://market-feed.stratark-prod.svc:7000",
@@ -100,7 +100,7 @@ _ENGINE_DEFAULTS: dict[EngineKindEnum, dict[str, Any]] = {
             "apiKey": "sk-ant-secret-7f3a",
         },
         "deployment_config": {
-            "image": "stratark/tradingagents-worker:2026.4.0",
+            "image": "stratark/tradingagents-api:2026.4.0",
             "replicas": 4,
             "concurrency": 8,
             "cpuLimit": "1.5",

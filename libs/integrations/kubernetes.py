@@ -141,7 +141,7 @@ _ENGINE_PRESETS: dict[str, dict[str, object]] = {
         ],
     },
     "tradingagents": {
-        "deployment": "tradingagents-worker",
+        "deployment": "tradingagents-api",
         "namespace": "stratark-prod",
         "replicas_desired": 4,
         "replicas_ready": 4,
@@ -154,10 +154,10 @@ _ENGINE_PRESETS: dict[str, dict[str, object]] = {
             {"key": "平均分析耗时", "value": "9.2s", "detail": "P95 14.6s"},
         ],
         "pods": [
-            ("tradingagents-wk-5f2a-aa01", "node-sg-2", "Running", "1.12", "1.8Gi", 0, "3d 2h"),
-            ("tradingagents-wk-5f2a-bb02", "node-sg-4", "Running", "0.98", "1.6Gi", 0, "3d 2h"),
-            ("tradingagents-wk-5f2a-cc03", "node-sg-1", "Running", "1.04", "1.7Gi", 0, "11h"),
-            ("tradingagents-wk-5f2a-dd04", "node-sg-3", "Scaling", "0.61", "1.1Gi", 0, "2m"),
+            ("tradingagents-api-5f2a-aa01", "node-sg-2", "Running", "1.12", "1.8Gi", 0, "3d 2h"),
+            ("tradingagents-api-5f2a-bb02", "node-sg-4", "Running", "0.98", "1.6Gi", 0, "3d 2h"),
+            ("tradingagents-api-5f2a-cc03", "node-sg-1", "Running", "1.04", "1.7Gi", 0, "11h"),
+            ("tradingagents-api-5f2a-dd04", "node-sg-3", "Scaling", "0.61", "1.1Gi", 0, "2m"),
         ],
         "resources": [
             ("CPU", 62, "3.75 / 6.0"),
@@ -171,11 +171,11 @@ _ENGINE_PRESETS: dict[str, dict[str, object]] = {
             ("Vector Store", "db", "Healthy", "pgvector"),
         ],
         "logs": [
-            ("ok", "[worker-cc03] analysis complete BTC/USDT 1h · conf=0.72 · 9.4s"),
+            ("ok", "[api-cc03] analysis complete BTC/USDT 1h · conf=0.72 · 9.4s"),
             ("info", "[gateway] anthropic claude-sonnet · 18,420 tokens · 200 OK"),
             ("warn", "[hpa] queue depth 22 > 20 · scaling 3 → 4 replicas"),
-            ("info", "[orchestrator] dispatch market-analysis ETH/USDT to worker-aa01"),
-            ("ok", "[worker-aa01] report agent_rpt_5521 persisted · pgvector"),
+            ("info", "[api] dispatch market-analysis ETH/USDT to api-aa01"),
+            ("ok", "[api-aa01] report agent_rpt_5521 persisted · pgvector"),
         ],
     },
 }
