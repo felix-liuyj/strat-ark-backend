@@ -75,11 +75,6 @@ class Settings(BaseSettings):
     K8S_NAMESPACE: str = "stratark-prod"
     K8S_IN_CLUSTER: bool = False
 
-    # 通知渠道（敏感值建议由运行环境注入）
-    TELEGRAM_BOT_TOKEN: str | None = None
-    SLACK_WEBHOOK_URL: str | None = None
-    LARK_WEBHOOK_URL: str | None = None
-
     STATIC_DIR: str = "./statics"
     STATIC_URL: str = "/statics"
 

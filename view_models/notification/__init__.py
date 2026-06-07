@@ -50,6 +50,63 @@ __all__ = (
 # 渠道配置中需要掩码后才能回显的敏感字段。
 _SENSITIVE_CONFIG_KEYS = frozenset({"botToken", "secret", "apiKey", "token", "password"})
 _MASK_VALUE = "***"
+_CHANNEL_DEFAULTS: dict[ChannelKindEnum, dict[str, Any]] = {
+    ChannelKindEnum.WEB: {
+        "display_name": "Web 站内通知",
+        "subtitle": "实时推送到通知中心",
+        "is_enabled": True,
+        "config": {"desktop": True, "sound": False, "retention": "30d"},
+    },
+    ChannelKindEnum.EMAIL: {
+        "display_name": "Email 邮件",
+        "subtitle": "未绑定",
+        "is_enabled": False,
+        "config": {"inbox": "", "frequency": "realtime", "digestTime": "09:00"},
+    },
+    ChannelKindEnum.TELEGRAM: {
+        "display_name": "Telegram",
+        "subtitle": "未绑定",
+        "is_enabled": False,
+        "config": {"botToken": "", "chatId": "", "format": "compact"},
+    },
+    ChannelKindEnum.LARK: {
+        "display_name": "飞书 / Lark",
+        "subtitle": "未绑定",
+        "is_enabled": False,
+        "config": {"webhookUrl": "", "secret": ""},
+    },
+    ChannelKindEnum.SLACK: {
+        "display_name": "Slack",
+        "subtitle": "未绑定",
+        "is_enabled": False,
+        "config": {"webhookUrl": "", "channel": "", "username": "StratArk"},
+    },
+    ChannelKindEnum.DISCORD: {
+        "display_name": "Discord",
+        "subtitle": "未绑定",
+        "is_enabled": False,
+        "config": {"webhookUrl": "", "username": "StratArk"},
+    },
+    ChannelKindEnum.WEBHOOK: {
+        "display_name": "Webhook",
+        "subtitle": "自定义 HTTP 回调",
+        "is_enabled": False,
+        "config": {"url": "", "method": "POST", "contentType": "application/json", "secret": ""},
+    },
+    ChannelKindEnum.SMS: {
+        "display_name": "SMS 短信",
+        "subtitle": "短信风险与成交提醒",
+        "is_enabled": False,
+        "config": {"provider": "Twilio", "phone": "", "template": "risk_alert_short"},
+    },
+    ChannelKindEnum.APPPUSH: {
+        "display_name": "App Push",
+        "subtitle": "移动端与浏览器推送",
+        "is_enabled": False,
+        "config": {"platform": "webpush", "audience": "all_devices", "priority": "normal"},
+    },
+}
+_CHANNEL_ORDER = tuple(_CHANNEL_DEFAULTS)
 
 
 def _mask_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -58,6 +115,38 @@ def _mask_config(config: dict[str, Any]) -> dict[str, Any]:
     for key, value in config.items():
         masked[key] = _MASK_VALUE if key in _SENSITIVE_CONFIG_KEYS and value else value
     return masked
+
+
+def _channel_order_index(channel: NotificationChannel) -> int:
+    try:
+        return _CHANNEL_ORDER.index(channel.channel_kind)
+    except ValueError:
+        return len(_CHANNEL_ORDER)
+
+
+def _make_default_channel(user_id: int, kind: ChannelKindEnum) -> NotificationChannel:
+    data = _CHANNEL_DEFAULTS[kind]
+    return NotificationChannel(
+        user_id=user_id,
+        channel_kind=kind,
+        display_name=data["display_name"],
+        subtitle=data["subtitle"],
+        is_enabled=data["is_enabled"],
+        config=dict(data["config"]),
+    )
+
+
+async def _ensure_user_channels(db: AsyncSession, user_id: int) -> list[NotificationChannel]:
+    channels = (await db.scalars(select(NotificationChannel).where(NotificationChannel.user_id == user_id))).all()
+    existing_kinds = {channel.channel_kind for channel in channels}
+    missing = [kind for kind in _CHANNEL_ORDER if kind not in existing_kinds]
+    if not missing:
+        return sorted(channels, key=_channel_order_index)
+    for kind in missing:
+        db.add(_make_default_channel(user_id, kind))
+    await db.commit()
+    seeded = (await db.scalars(select(NotificationChannel).where(NotificationChannel.user_id == user_id))).all()
+    return sorted(seeded, key=_channel_order_index)
 
 
 def _build_notification(item: Notification) -> NotificationResponseData:
@@ -238,13 +327,7 @@ class ListNotificationChannelsViewModel(BaseViewModel):
     async def before(self) -> None:
         await super().before()
         self.checker.require_auth()
-        channels = (
-            await self.db.scalars(
-                select(NotificationChannel)
-                .where(NotificationChannel.user_id == int(self.checker.user_id))
-                .order_by(NotificationChannel.id.asc())
-            )
-        ).all()
+        channels = await _ensure_user_channels(self.db, int(self.checker.user_id))
         self.operating_successfully([_build_channel(channel) for channel in channels])
 
 

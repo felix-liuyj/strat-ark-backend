@@ -160,8 +160,11 @@ FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy 2.0（异步）· PostgreSQL（p
 | TradingAgents API 与 LLM | `TRADINGAGENTS_API_URL`、`LLM_*` | 投研 API 服务和大模型网关，留空走 stub |
 | 行情数据源 | `MARKET_DATA_*` | 行情 REST / WS 数据源，留空走 stub |
 | Kubernetes 运维 | `K8S_*` | 引擎集群状态与运维配置 |
-| 通知渠道 | `TELEGRAM_BOT_TOKEN`、`SLACK_WEBHOOK_URL`、`LARK_WEBHOOK_URL` | 渠道发送密钥，留空不发送真实消息 |
 | 静态资源 | `STATIC_*` | 本地静态资源目录和访问前缀 |
+
+通知渠道配置不走全局环境变量。Email、Telegram、Lark、Slack、Webhook、SMS、App Push
+等渠道的端点和凭证由用户在通知中心维护，后端按 `user_id + channel_kind` 独立入库并在
+回显时掩码敏感字段。
 
 ## 文档与部署
 
