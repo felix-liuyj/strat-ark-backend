@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     OAUTH_MICROSOFT_CLIENT_ID: str | None = None
     OAUTH_MICROSOFT_TENANT: str = "common"
     OAUTH_TOKEN_TIMEOUT_SECONDS: float = 10.0
+    # client_secret 仅在 IdP 注册为 Web（机密）客户端时需要：Google Web 应用即使走 PKCE
+    # 也要求 token 端点带 client_secret；注册为纯 public/SPA 客户端时留空即可（仅 PKCE）。
+    # 永远只在后端持有，绝不下发前端。
+    OAUTH_GOOGLE_CLIENT_SECRET: str | None = None
+    OAUTH_MICROSOFT_CLIENT_SECRET: str | None = None
 
     # 业务敏感数据加密配置
     ENCRYPT_KEY: str | None = None

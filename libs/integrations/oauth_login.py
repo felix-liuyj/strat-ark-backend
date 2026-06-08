@@ -75,14 +75,25 @@ async def _exchange_microsoft(code: str, redirect_uri: str, code_verifier: str) 
     return _microsoft_identity(claims)
 
 
+def _configured_client_secret(provider: str) -> str:
+    settings = get_settings()
+    value = settings.OAUTH_GOOGLE_CLIENT_SECRET if provider == "google" else settings.OAUTH_MICROSOFT_CLIENT_SECRET
+    return (value or "").strip()
+
+
 def _token_payload(provider: str, code: str, redirect_uri: str, code_verifier: str) -> dict[str, str]:
-    return {
+    payload = {
         "client_id": _configured_client_id(provider),
         "code": code,
         "code_verifier": code_verifier,
         "grant_type": "authorization_code",
         "redirect_uri": redirect_uri,
     }
+    # Web（机密）客户端的 token 端点要求 client_secret；纯 public/SPA 客户端留空即只走 PKCE。
+    client_secret = _configured_client_secret(provider)
+    if client_secret:
+        payload["client_secret"] = client_secret
+    return payload
 
 
 async def _request_token(url: str, data: dict[str, str]) -> dict[str, Any]:
@@ -128,16 +139,20 @@ async def _public_key_for_token(id_token: str, jwks_url: str) -> Any:
     except jwt.PyJWTError as exc:
         raise ValueError("第三方身份令牌格式无效") from exc
     kid = header.get("kid")
-    for key in await _get_jwks(jwks_url):
-        if key.get("kid") == kid:
-            return jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key))
+    # IdP 会轮换签名密钥：缓存未命中该 kid 时强制刷新一次 JWKS 再匹配，
+    # 避免密钥轮换后有效令牌在缓存 TTL 内被误拒。
+    for force in (False, True):
+        for key in await _get_jwks(jwks_url, force=force):
+            if key.get("kid") == kid:
+                return jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key))
     raise ValueError("第三方身份令牌签名无法校验")
 
 
-async def _get_jwks(url: str) -> list[dict[str, Any]]:
-    expires_at, cached = _JWKS_CACHE.get(url, (0.0, []))
-    if cached and expires_at > time.time():
-        return cached
+async def _get_jwks(url: str, force: bool = False) -> list[dict[str, Any]]:
+    if not force:
+        expires_at, cached = _JWKS_CACHE.get(url, (0.0, []))
+        if cached and expires_at > time.time():
+            return cached
     try:
         async with httpx.AsyncClient(timeout=get_settings().OAUTH_TOKEN_TIMEOUT_SECONDS) as client:
             payload = (await client.get(url)).json()
