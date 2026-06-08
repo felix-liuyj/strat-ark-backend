@@ -2,7 +2,9 @@
 
 import random
 import re
+import secrets
 import string
+from datetime import UTC, datetime
 
 from fastapi import Request
 from sqlalchemy import select
@@ -12,6 +14,7 @@ from configs import get_settings
 from forms.auth import (
     ChangePasswordForm,
     LoginForm,
+    OAuthExchangeForm,
     RefreshTokenForm,
     RegisterForm,
     ResetPasswordForm,
@@ -27,10 +30,13 @@ from libs.auth.jwt import (
 from libs.auth.permissions import PermissionChecker
 from libs.custom import render_template
 from libs.email import EmailController
+from libs.integrations.oauth_login import VerifiedOAuthIdentity, exchange_oauth_code
 from libs.response import ResponseStatusCodeEnum
 from libs.sso import AUTH_INVALID_MESSAGE
 from models.account import UserTypeEnum
+from models.oauth_identity import OAuthIdentity
 from models.user import User
+from models.user_center import OAuthBinding, OAuthProviderEnum
 from responses.auth import AuthTokenResponseData, UserProfileResponseData
 from view_models.common.base import BaseViewModel
 
@@ -38,6 +44,7 @@ __all__ = (
     "ChangePasswordViewModel",
     "GetCurrentUserViewModel",
     "LoginViewModel",
+    "OAuthExchangeViewModel",
     "RefreshTokenViewModel",
     "RegisterViewModel",
     "ResetPasswordViewModel",
@@ -86,6 +93,22 @@ def _build_token_response(user: User) -> AuthTokenResponseData:
         refreshToken=refresh_token,
         user=_build_user_profile(user),
     )
+
+
+def _oauth_display_name(identity: VerifiedOAuthIdentity) -> str:
+    if identity.name:
+        return identity.name[:100]
+    if identity.email and "@" in identity.email:
+        return identity.email.split("@", 1)[0][:100]
+    return f"{identity.provider}-{identity.subject[:12]}"
+
+
+def _oauth_email(identity: VerifiedOAuthIdentity) -> str | None:
+    return identity.email.strip().lower() if identity.email else None
+
+
+def _random_oauth_password() -> str:
+    return secrets.token_urlsafe(32)
 
 
 class SendVerificationCodeViewModel(BaseViewModel):
@@ -285,6 +308,141 @@ class LoginViewModel(BaseViewModel):
             return
 
         self.operating_successfully(_build_token_response(user))
+
+
+class OAuthExchangeViewModel(BaseViewModel):
+    """OAuth 授权码换取自家 session。"""
+
+    def __init__(self, request: Request, db: AsyncSession, form: OAuthExchangeForm) -> None:
+        super().__init__(request=request)
+        self.form = form
+        self.db = db
+
+    async def before(self) -> None:
+        await super().before()
+        identity = await self._exchange_identity()
+        if identity is None:
+            return
+        user = await self._resolve_user(identity)
+        if user is None:
+            return
+        await self._sync_binding(user, identity)
+        await self.db.commit()
+        await self.db.refresh(user)
+        self.operating_successfully(_build_token_response(user))
+
+    async def _exchange_identity(self) -> VerifiedOAuthIdentity | None:
+        try:
+            return await exchange_oauth_code(
+                self.form.provider.value,
+                self.form.code,
+                self.form.redirectUri,
+                self.form.codeVerifier,
+            )
+        except ValueError as exc:
+            self.illegal_parameters(str(exc))
+            return None
+
+    async def _resolve_user(self, identity: VerifiedOAuthIdentity) -> User | None:
+        oauth_identity = await self._get_oauth_identity(identity)
+        if oauth_identity is not None:
+            return await self._resolve_existing_user(oauth_identity, identity)
+        return await self._create_oauth_user(identity)
+
+    async def _get_oauth_identity(self, identity: VerifiedOAuthIdentity) -> OAuthIdentity | None:
+        return await self.db.scalar(
+            select(OAuthIdentity).where(
+                OAuthIdentity.provider == identity.provider,
+                OAuthIdentity.subject == identity.subject,
+            )
+        )
+
+    async def _resolve_existing_user(self, row: OAuthIdentity, identity: VerifiedOAuthIdentity) -> User | None:
+        user = await self.db.get(User, row.user_id)
+        if user is None or not user.is_active:
+            self.unauthorized(AUTH_INVALID_MESSAGE)
+            return None
+        self._refresh_oauth_identity(row, identity)
+        self._refresh_user_profile(user, identity)
+        return user
+
+    async def _create_oauth_user(self, identity: VerifiedOAuthIdentity) -> User | None:
+        email = _oauth_email(identity)
+        if not email:
+            self.illegal_parameters("第三方账号未返回可用邮箱")
+            return None
+        if await self.db.scalar(select(User).where(User.email == email)) is not None:
+            self.illegal_parameters("该邮箱已被其它登录方式使用，请先用原方式登录后绑定第三方账号")
+            return None
+        user = self._new_oauth_user(identity, email)
+        self.db.add(user)
+        await self.db.flush()
+        self.db.add(self._new_oauth_identity(user.id, identity))
+        return user
+
+    @staticmethod
+    def _new_oauth_user(identity: VerifiedOAuthIdentity, email: str) -> User:
+        user = User(
+            email=email,
+            display_name=_oauth_display_name(identity),
+            user_type=_resolve_registration_user_type(email),
+            is_active=True,
+            is_verified=identity.email_verified,
+            avatar_url=identity.picture,
+        )
+        user.set_password(_random_oauth_password())
+        return user
+
+    @staticmethod
+    def _new_oauth_identity(user_id: int, identity: VerifiedOAuthIdentity) -> OAuthIdentity:
+        now = datetime.now(UTC)
+        return OAuthIdentity(
+            user_id=user_id,
+            provider=identity.provider,
+            subject=identity.subject,
+            profile_email=_oauth_email(identity),
+            display_name=identity.name,
+            avatar_url=identity.picture,
+            raw_claims=identity.raw_claims,
+            linked_at=now,
+            refreshed_at=now,
+        )
+
+    @staticmethod
+    def _refresh_oauth_identity(row: OAuthIdentity, identity: VerifiedOAuthIdentity) -> None:
+        row.profile_email = _oauth_email(identity)
+        row.display_name = identity.name
+        row.avatar_url = identity.picture
+        row.raw_claims = identity.raw_claims
+        row.refreshed_at = datetime.now(UTC)
+
+    @staticmethod
+    def _refresh_user_profile(user: User, identity: VerifiedOAuthIdentity) -> None:
+        if identity.name:
+            user.display_name = _oauth_display_name(identity)
+        if identity.picture:
+            user.avatar_url = identity.picture
+
+    async def _sync_binding(self, user: User, identity: VerifiedOAuthIdentity) -> None:
+        provider = OAuthProviderEnum(identity.provider)
+        binding = await self.db.scalar(
+            select(OAuthBinding).where(OAuthBinding.user_id == user.id, OAuthBinding.provider == provider)
+        )
+        if binding is None:
+            self.db.add(self._new_binding(user.id, provider, identity))
+            return
+        binding.bound = True
+        binding.account_label = identity.email or identity.subject
+
+    @staticmethod
+    def _new_binding(user_id: int, provider: OAuthProviderEnum, identity: VerifiedOAuthIdentity) -> OAuthBinding:
+        return OAuthBinding(
+            user_id=user_id,
+            provider=provider,
+            bound=True,
+            account_label=identity.email or identity.subject,
+            linked_at=datetime.now(UTC),
+        )
 
 
 class RefreshTokenViewModel(BaseViewModel):

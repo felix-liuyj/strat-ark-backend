@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     JWT_REFRESH_EXPIRE_DAYS: int = 30
     ADMIN_EMAIL_SUFFIXES: str = ""
 
+    OAUTH_GOOGLE_CLIENT_ID: str | None = None
+    OAUTH_MICROSOFT_CLIENT_ID: str | None = None
+    OAUTH_MICROSOFT_TENANT: str = "common"
+    OAUTH_TOKEN_TIMEOUT_SECONDS: float = 10.0
+
     # 业务敏感数据加密配置
     ENCRYPT_KEY: str | None = None
 

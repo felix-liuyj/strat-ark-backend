@@ -25,6 +25,7 @@ warnings.filterwarnings("ignore", message="The HMAC key is .*", category=Warning
 
 REQUIRED_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/auth/login"),
+    ("POST", "/oauth/exchange"),
     ("GET", "/auth/me"),
     ("POST", "/common/oss/presign"),
     ("POST", "/common/oss/confirm"),

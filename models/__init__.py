@@ -33,6 +33,7 @@ from models.notification import (
     NotificationSubscription,
     NotificationTypeEnum,
 )
+from models.oauth_identity import OAuthIdentity
 from models.risk import (
     RiskEvent,
     RiskEventLevelEnum,
@@ -118,6 +119,7 @@ __all__ = (
     "NotificationSubscription",
     "NotificationTypeEnum",
     "OAuthBinding",
+    "OAuthIdentity",
     "OAuthProviderEnum",
     "Order",
     "OrderStatusEnum",

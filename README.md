@@ -79,7 +79,7 @@ strat-ark-backend/
 ├── forms/          # 请求表单（ApiFormModel + Body(embed)，camelCase）
 ├── responses/      # 响应模型（ApiResponseModel + Field，camelCase）
 ├── view_models/    # 业务逻辑（BaseViewModel，async with 生命周期，before()）
-├── models/         # SQLAlchemy ORM（28 张表，__init__ 聚合触发建表）
+├── models/         # SQLAlchemy ORM（29 张表，__init__ 聚合触发建表）
 ├── libs/
 │   ├── auth/       # JWT 签发/校验、PermissionChecker
 │   ├── audit/      # 平台审计（上下文 + 链式签名持久化服务）
@@ -98,7 +98,7 @@ strat-ark-backend/
 
 | 域 | 前端页面 | 关键能力 |
 |---|---|---|
-| 认证 auth | 登录 / 用户中心 | 注册 / 登录 / 验证码 / 双 token 刷新 / 资料 / 管理员用户列表 |
+| 认证 auth | 登录 / 用户中心 | 注册 / 登录 / OAuth exchange / 验证码 / 双 token 刷新 / 资料 / 管理员用户列表 |
 | 交易所 exchanges | Exchange Accounts | CRUD / 连接测试 / 同步余额 / 权限检查 / 设默认 |
 | 机器人 bots | Bots / Bot Detail / Wizard | 列表 / 详情 / 创建向导 / 启停重启 / Live 强确认 / 交易 / 持仓 / 日志 / AI 摘要 |
 | 策略 strategies | Strategy Lab | 列表（内置+私有）/ 详情 / 参数 / 版本 / 源码 / 风险标签 |
@@ -115,12 +115,12 @@ strat-ark-backend/
 | 设置 settings | Settings | General / LLM 网关 / Prompt 模板 / 外观 / 数据 |
 | 用户中心 user_center | User Center | 平台 API Key / 第三方账号绑定 / 活跃会话 / 2FA |
 
-共 28 张表、120+ 条路由；完整端点见 `/docs`。
+共 29 张表、120+ 条路由；完整端点见 `/docs`。
 
 ## 核心能力
 
 - **ViewModel 三层**：路由（参数映射）→ ViewModel（`async with` 生命周期，`before()`）→ 统一响应。
-- **JWT 鉴权 + 角色 gating**：access/refresh 双 token；引擎管理与审计日志仅管理员。
+- **JWT 鉴权 + OAuth 登录**：access/refresh 双 token；Google / Microsoft 授权码后端 exchange；引擎管理与审计日志仅管理员。
 - **平台审计**：append-only + sha256 链式签名（可校验、不可篡改），危险运维操作自动留痕。
 - **订阅计费（模拟）**：套餐 / 用量 / 账单；升级降级取消仅更新本地订阅与 `users.plan`，**绝不接入真实支付**。
 - **统一响应契约 + 全局异常处理**：`operating_successfully` / `not_found` / `forbidden` 等；401/403/422/500 收敛为业务响应。
@@ -134,7 +134,7 @@ strat-ark-backend/
 - `trading_agents` / `agent` / `backtest_engine`（多智能体投研、回测引擎）
 - `market_data` / `trading` / `risk_engine`（行情、交易记录、风控评估）
 - `kubernetes` / `notifier`（引擎集群运维、多渠道通知发送）
-- `billing` / `data_ops` / `oauth`（订阅计费、数据导出、第三方绑定）
+- `billing` / `data_ops` / `oauth`（订阅计费、数据导出、用户中心第三方绑定）
 
 接入真实服务时，替换对应 stub 实现，并在管理员引擎管理中维护 Freqtrade /
 TradingAgents 的连接配置、凭证、服务地址与部署参数。后端 `.env` 不再作为引擎连接
@@ -156,6 +156,7 @@ FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy 2.0（异步）· PostgreSQL（p
 | 数据库 | `DATABASE_URL`、`DATABASE_SCHEMA` | PostgreSQL 连接与 schema |
 | Redis | `REDIS_*` | 缓存与会话相关 Redis 连接 |
 | JWT 与管理员 | `JWT_*`、`ADMIN_EMAIL_SUFFIXES` | 自家 session 与管理员邮箱后缀 |
+| OAuth 登录 | `OAUTH_GOOGLE_CLIENT_ID`、`OAUTH_MICROSOFT_CLIENT_ID`、`OAUTH_MICROSOFT_TENANT` | Google / Microsoft Public PKCE 后端 exchange 与 id_token 校验 |
 | 业务敏感数据加密 | `ENCRYPT_KEY` | 交易所和网关密钥入库加密，生产必须注入强随机值 |
 | 阿里云 OSS | `ALI_OSS_*`、`BRAND_LOGO_OSS_PATH` | 文件上传和邮件 logo 公开地址；上传目录规则在 `libs/upload_rules.py` |
 | SMTP 邮件 | `SMTP_*` | 邮件验证码发送 |

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from forms.auth import (
     ChangePasswordForm,
     LoginForm,
+    OAuthExchangeForm,
     RefreshTokenForm,
     RegisterForm,
     ResetPasswordForm,
@@ -24,6 +25,7 @@ from view_models.auth import (
     GetCurrentUserViewModel,
     ListUsersViewModel,
     LoginViewModel,
+    OAuthExchangeViewModel,
     RefreshTokenViewModel,
     RegisterViewModel,
     ResetPasswordViewModel,
@@ -79,6 +81,21 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
     return await create_response(LoginViewModel, request, db, form=form)
+
+
+@router.post(
+    "/oauth/exchange",
+    response_model=BaseResponseModel[AuthTokenResponseData],
+    summary="OAuth 登录授权码交换",
+    description="使用前端 Public PKCE 流程得到的授权码换取自家访问令牌和刷新令牌。",
+    tags=["StratArk/认证 Auth"],
+)
+async def exchange_oauth_code(
+    request: Request,
+    form: OAuthExchangeForm,
+    db: AsyncSession = Depends(get_db),
+) -> BaseResponseModel:
+    return await create_response(OAuthExchangeViewModel, request, db, form=form)
 
 
 @router.post(

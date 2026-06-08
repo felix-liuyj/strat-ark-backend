@@ -10,6 +10,8 @@ __all__ = (
     "ChangePasswordForm",
     "ForgotPasswordForm",
     "LoginForm",
+    "OAuthExchangeForm",
+    "OAuthLoginProviderEnum",
     "RefreshTokenForm",
     "RegisterForm",
     "ResetPasswordForm",
@@ -20,6 +22,11 @@ __all__ = (
 class SendVerificationPurposeEnum(StrEnum):
     REGISTER = "register"
     RESET = "reset"
+
+
+class OAuthLoginProviderEnum(StrEnum):
+    GOOGLE = "google"
+    MICROSOFT = "microsoft"
 
 
 class SendVerificationCodeForm(ApiFormModel):
@@ -37,6 +44,13 @@ class RegisterForm(ApiFormModel):
 class LoginForm(ApiFormModel):
     email: str = Body(..., embed=True, description="邮箱地址")
     password: str = Body(..., embed=True, description="密码")
+
+
+class OAuthExchangeForm(ApiFormModel):
+    provider: OAuthLoginProviderEnum = Body(..., embed=True, description="提供方：google / microsoft")
+    code: str = Body(..., embed=True, description="OAuth 授权码")
+    redirectUri: str = Body(..., embed=True, description="前端回调地址")
+    codeVerifier: str = Body(..., embed=True, description="PKCE code_verifier")
 
 
 class ForgotPasswordForm(ApiFormModel):
