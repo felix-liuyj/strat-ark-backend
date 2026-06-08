@@ -17,7 +17,7 @@ from forms.engine import (
 )
 from libs.audit.service import AuditLogService
 from libs.auth.permissions import PermissionChecker
-from libs.integrations import kubernetes
+from libs.integrations import engine_runtime
 from models.account import UserTypeEnum
 from models.audit_log import ActorTypeEnum, AuditActionEnum, AuditCategoryEnum, AuditStatusEnum
 from models.engine import (
@@ -231,14 +231,16 @@ class GetEngineMonitorViewModel(_AdminEngineViewModel):
         await super().before()
         if not self._require_admin():
             return
-        await self._get_or_seed_engine(self.engine_kind)
+        engine = await self._get_or_seed_engine(self.engine_kind)
 
         key = str(self.engine_kind)
-        snapshot = kubernetes.fetch_runtime_snapshot(key)
-        pods = kubernetes.fetch_pods(key)
-        resources = kubernetes.fetch_resources(key)
-        deps = kubernetes.fetch_dependencies(key)
-        logs = kubernetes.fetch_logs(key, level=self.log_level)
+        # 引擎经服务连接交互：运行状态由 connection_config.serviceUrl 探活派生。
+        service_url = str((engine.connection_config or {}).get("serviceUrl", ""))
+        snapshot = engine_runtime.fetch_runtime_snapshot(key, service_url)
+        pods = engine_runtime.fetch_pods(key)
+        resources = engine_runtime.fetch_resources(key)
+        deps = engine_runtime.fetch_dependencies(key)
+        logs = engine_runtime.fetch_logs(key, level=self.log_level)
 
         self.operating_successfully(
             EngineMonitorResponseData(
@@ -396,25 +398,27 @@ class UpdateEngineDeploymentViewModel(_AdminEngineViewModel):
         )
 
 
-# 运维操作类型 → kubernetes service 调用。
-def _dispatch_op(op_type: EngineOpTypeEnum, engine_key: str, form: EngineOpExecuteForm) -> kubernetes.EngineOpResult:
+# 运维操作类型 → 引擎服务连接调用（经引擎暴露的控制 API；test_connection 探 serviceUrl）。
+def _dispatch_op(
+    op_type: EngineOpTypeEnum, engine_key: str, service_url: str, form: EngineOpExecuteForm
+) -> engine_runtime.EngineOpResult:
     if op_type == EngineOpTypeEnum.SCALE:
-        return kubernetes.scale_engine(engine_key, form.replicas or 0)
+        return engine_runtime.scale_engine(engine_key, form.replicas or 0)
     if op_type == EngineOpTypeEnum.RESTART:
-        return kubernetes.trigger_restart(engine_key)
+        return engine_runtime.trigger_restart(engine_key)
     if op_type == EngineOpTypeEnum.RELOAD:
-        return kubernetes.reload_engine(engine_key)
+        return engine_runtime.reload_engine(engine_key)
     if op_type == EngineOpTypeEnum.DRAIN:
-        return kubernetes.drain_engine(engine_key)
+        return engine_runtime.drain_engine(engine_key)
     if op_type == EngineOpTypeEnum.CLEAR_QUEUE:
-        return kubernetes.reload_engine(engine_key)
+        return engine_runtime.reload_engine(engine_key)
     if op_type == EngineOpTypeEnum.REDEPLOY:
-        return kubernetes.trigger_redeploy(engine_key, form.image)
+        return engine_runtime.trigger_redeploy(engine_key, form.image)
     if op_type == EngineOpTypeEnum.EMERGENCY_STOP:
-        return kubernetes.emergency_stop_engine(engine_key)
+        return engine_runtime.emergency_stop_engine(engine_key)
     if op_type == EngineOpTypeEnum.TEAR_DOWN:
-        return kubernetes.tear_down_engine(engine_key)
-    return kubernetes.test_connection(engine_key, "")
+        return engine_runtime.tear_down_engine(engine_key)
+    return engine_runtime.test_connection(engine_key, service_url)
 
 
 class ExecuteEngineOpViewModel(_AdminEngineViewModel):
@@ -445,7 +449,8 @@ class ExecuteEngineOpViewModel(_AdminEngineViewModel):
             return
 
         engine = await self._get_or_seed_engine(self.engine_kind)
-        result = _dispatch_op(op_type, str(self.engine_kind), self.form)
+        service_url = str((engine.connection_config or {}).get("serviceUrl", ""))
+        result = _dispatch_op(op_type, str(self.engine_kind), service_url, self.form)
 
         detail: dict[str, Any] = {}
         if self.form.replicas is not None:

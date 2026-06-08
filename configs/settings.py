@@ -86,9 +86,8 @@ class Settings(BaseSettings):
     # 否则（掩码 key / 空 secret / 占位密文）一律回退确定性拟真数据。
     EXCHANGE_API_BASE: str = "https://api.binance.com"
 
-    # 集群 / 引擎运维（Kubernetes）
-    K8S_NAMESPACE: str = "stratark-prod"
-    K8S_IN_CLUSTER: bool = False
+    # 引擎运行时（freqtrade / tradingagents）经服务连接交互：地址存于各引擎的
+    # connection_config.serviceUrl（引擎配置页 UI 管理），不走 env，无需 K8s 集群化配置。
 
     STATIC_DIR: str = "./statics"
     STATIC_URL: str = "/statics"
