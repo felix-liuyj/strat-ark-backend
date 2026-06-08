@@ -5,7 +5,7 @@
 """
 
 from fastapi import Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from forms.risk import (
@@ -176,19 +176,49 @@ def _default_event_to_response(index: int, item: _DefaultEvent) -> RiskEventResp
 
 
 class RiskOverviewViewModel(BaseViewModel):
-    """风险总览（总体状态 + 待处理告警 + 关键指标）。"""
+    """风险总览：关键指标由风控引擎给出，待处理告警数与总体状态由真实风控事件派生。"""
 
-    def __init__(self, request: Request, checker: PermissionChecker) -> None:
+    def __init__(self, request: Request, db: AsyncSession, checker: PermissionChecker) -> None:
         super().__init__(request=request)
+        self.db = db
         self.checker = checker
 
     async def before(self) -> None:
         await super().before()
         self.checker.require_auth()
+        user_id = int(self.checker.user_id)
         overview = risk_engine.get_risk_overview()
+
+        # 待处理告警数取用户真实未处理风控事件计数；总体状态由是否存在未处理高危事件派生
+        # （关键指标 daily_loss / drawdown / exposure 仍由引擎给出，属交易派生的实时口径）。
+        pending_alerts = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(RiskEvent)
+                .where(RiskEvent.user_id == user_id, RiskEvent.resolved.is_(False))
+            )
+        ) or 0
+        has_danger = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(RiskEvent)
+                .where(
+                    RiskEvent.user_id == user_id,
+                    RiskEvent.resolved.is_(False),
+                    RiskEvent.level == RiskEventLevelEnum.DANGER,
+                )
+            )
+        ) or 0
+        if has_danger:
+            overall_status = "critical"
+        elif pending_alerts:
+            overall_status = "warning"
+        else:
+            overall_status = overview.overall_status
+
         data = RiskOverviewResponseData(
-            overallStatus=overview.overall_status,
-            pendingAlerts=overview.pending_alerts,
+            overallStatus=overall_status,
+            pendingAlerts=int(pending_alerts),
             metrics=[
                 RiskMetricResponseData(key=m.key, label=m.label, current=m.current, limit=m.limit, unit=m.unit)
                 for m in overview.metrics

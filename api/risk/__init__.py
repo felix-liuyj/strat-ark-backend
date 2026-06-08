@@ -44,8 +44,9 @@ router = APIRouter()
 async def get_risk_overview(
     request: Request,
     checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(RiskOverviewViewModel, request, checker=checker)
+    return await create_response(RiskOverviewViewModel, request, db, checker=checker)
 
 
 @router.get(
