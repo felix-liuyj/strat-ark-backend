@@ -37,8 +37,6 @@ from responses.engine import (
     EngineMonitorResponseData,
     EngineOpResponseData,
     EngineResponseData,
-    PodResponseData,
-    ResourceUsageResponseData,
 )
 from view_models.common.base import BaseViewModel
 
@@ -237,8 +235,6 @@ class GetEngineMonitorViewModel(_AdminEngineViewModel):
         # 引擎经服务连接交互：运行状态由 connection_config.serviceUrl 探活派生。
         service_url = str((engine.connection_config or {}).get("serviceUrl", ""))
         snapshot = engine_runtime.fetch_runtime_snapshot(key, service_url)
-        pods = engine_runtime.fetch_pods(key)
-        resources = engine_runtime.fetch_resources(key)
         deps = engine_runtime.fetch_dependencies(key)
         logs = engine_runtime.fetch_logs(key, level=self.log_level)
 
@@ -246,28 +242,13 @@ class GetEngineMonitorViewModel(_AdminEngineViewModel):
             EngineMonitorResponseData(
                 engineKind=self.engine_kind,
                 runtimeStatus=snapshot.runtime_status,
-                replicasReady=snapshot.replicas_ready,
-                replicasDesired=snapshot.replicas_desired,
+                connected=snapshot.connected,
+                serviceUrl=snapshot.service_url,
+                latencyMs=snapshot.latency_ms,
                 queueDepth=snapshot.queue_depth,
                 errorRate=snapshot.error_rate,
                 syncedAt=snapshot.synced_at,
                 metrics=snapshot.metrics,
-                pods=[
-                    PodResponseData(
-                        name=pod.name,
-                        node=pod.node,
-                        status=pod.status,
-                        cpu=pod.cpu,
-                        mem=pod.mem,
-                        restarts=pod.restarts,
-                        uptime=pod.uptime,
-                    )
-                    for pod in pods
-                ],
-                resources=[
-                    ResourceUsageResponseData(label=res.label, percent=res.percent, value=res.value)
-                    for res in resources
-                ],
                 dependencies=[
                     DependencyResponseData(name=dep.name, kind=dep.kind, status=dep.status, latency=dep.latency)
                     for dep in deps

@@ -16,8 +16,6 @@ __all__ = (
     "EngineMonitorResponseData",
     "EngineOpResponseData",
     "EngineResponseData",
-    "PodResponseData",
-    "ResourceUsageResponseData",
 )
 
 
@@ -31,22 +29,6 @@ class EngineResponseData(ApiResponseModel):
     deploymentName: str = Field(..., description="Deployment 名称")
     status: EngineStatusEnum = Field(..., description="运行状态")
     replicasDesired: int = Field(..., description="期望副本数")
-
-
-class PodResponseData(ApiResponseModel):
-    name: str = Field(..., description="Pod 名称")
-    node: str = Field(..., description="所在节点")
-    status: str = Field(..., description="Pod 状态")
-    cpu: str = Field(..., description="CPU 用量")
-    mem: str = Field(..., description="内存用量")
-    restarts: int = Field(..., description="重启次数")
-    uptime: str = Field(..., description="运行时长")
-
-
-class ResourceUsageResponseData(ApiResponseModel):
-    label: str = Field(..., description="资源名称")
-    percent: int = Field(..., description="使用百分比")
-    value: str = Field(..., description="可读用量")
 
 
 class DependencyResponseData(ApiResponseModel):
@@ -63,18 +45,17 @@ class EngineLogResponseData(ApiResponseModel):
 
 
 class EngineMonitorResponseData(ApiResponseModel):
-    """引擎监控聚合（Pods / 资源 / 依赖 / 日志 / 指标 + 运行时快照）。"""
+    """引擎监控聚合（服务连接视图：连接 + 运营指标 + 依赖 + 日志）。"""
 
     engineKind: EngineKindEnum = Field(..., description="引擎类型")
-    runtimeStatus: str = Field(..., description="运行时状态")
-    replicasReady: int = Field(..., description="就绪副本数")
-    replicasDesired: int = Field(..., description="期望副本数")
+    runtimeStatus: str = Field(..., description="运行时状态（running / degraded / unknown）")
+    connected: bool = Field(..., description="serviceUrl 是否可达")
+    serviceUrl: str = Field(..., description="引擎暴露的服务地址")
+    latencyMs: float | None = Field(None, description="连接延迟（毫秒，不可达为空）")
     queueDepth: int = Field(..., description="队列深度")
     errorRate: str = Field(..., description="错误率")
     syncedAt: datetime = Field(..., description="数据同步时间")
     metrics: list[dict[str, str]] = Field(..., description="关键指标卡")
-    pods: list[PodResponseData] = Field(..., description="Pod 列表")
-    resources: list[ResourceUsageResponseData] = Field(..., description="资源用量")
     dependencies: list[DependencyResponseData] = Field(..., description="外部依赖健康度")
     logs: list[EngineLogResponseData] = Field(..., description="近期日志")
 

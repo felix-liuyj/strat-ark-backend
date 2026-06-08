@@ -1,13 +1,13 @@
 """引擎运行时集成（freqtrade / tradingagents 经服务连接交互）。
 
 部署模型：两个引擎**不做 K8s 集群化**，作为独立服务运行，backend 通过它们**暴露的
-HTTP API**（``connection_config.serviceUrl``）做服务连接交互。因此运行时状态与连接测试
-经 serviceUrl 探活实现，而非 K8s API。
+HTTP API**（``connection_config.serviceUrl``）做服务连接交互。监控为纯服务连接视图，不含
+容器组 / 副本 / 主机资源等编排级概念。
 
-- 连接测试 / 运行状态：``test_connection`` 与 ``fetch_runtime_snapshot`` 用 httpx 探测引擎
+- 连接 / 运行状态：``test_connection`` 与 ``fetch_runtime_snapshot`` 用 httpx 探测引擎
   serviceUrl（任意 HTTP 响应即视为在线并计时）；未配置 serviceUrl 或不可达时如实反映。
-- Pod / 资源 / 依赖 / 日志：服务连接本身不暴露这些主机 / 编排级指标（需引擎自身 API 或集中
-  监控后端提供），暂以确定性示意数据呈现，待引擎 API 暴露对应端点后再接真。
+- 运营指标 / 依赖 / 日志：队列深度 / 错误率 / 指标卡 / 依赖健康 / 日志为引擎运营层数据，
+  服务连接本身未必全部暴露，暂以确定性示意数据呈现，待引擎 API 暴露对应端点后再接真。
 - 运维操作（restart / reload / stop 等）映射到引擎暴露的控制 API（如 freqtrade
   ``/api/v1/reload_config`` / ``/stop``），属引擎控制（交易执行相邻），保持预留 stub。
 
@@ -26,17 +26,13 @@ from libs.logger import logger
 
 __all__ = (
     "DependencyHealth",
+    "EngineLogEntry",
     "EngineOpResult",
     "EngineRuntimeSnapshot",
-    "PodInfo",
-    "PodLogEntry",
-    "ResourceUsage",
     "drain_engine",
     "emergency_stop_engine",
     "fetch_dependencies",
     "fetch_logs",
-    "fetch_pods",
-    "fetch_resources",
     "fetch_runtime_snapshot",
     "reload_engine",
     "scale_engine",
@@ -50,28 +46,6 @@ _HTTP_TIMEOUT = 6.0
 
 
 @dataclass(slots=True)
-class PodInfo:
-    """单个引擎运行实例信息（服务连接模型下为示意，命名沿用兼容前端响应）。"""
-
-    name: str
-    node: str
-    status: str
-    cpu: str
-    mem: str
-    restarts: int
-    uptime: str
-
-
-@dataclass(slots=True)
-class ResourceUsage:
-    """单项资源用量（含百分比与可读文案）。"""
-
-    label: str
-    percent: int
-    value: str
-
-
-@dataclass(slots=True)
 class DependencyHealth:
     """单个外部依赖的健康度。"""
 
@@ -82,7 +56,7 @@ class DependencyHealth:
 
 
 @dataclass(slots=True)
-class PodLogEntry:
+class EngineLogEntry:
     """单条引擎日志。"""
 
     timestamp: datetime
@@ -92,11 +66,12 @@ class PodLogEntry:
 
 @dataclass(slots=True)
 class EngineRuntimeSnapshot:
-    """引擎运行时聚合快照。"""
+    """引擎运行时聚合快照（服务连接视图）。"""
 
     runtime_status: str
-    replicas_desired: int
-    replicas_ready: int
+    connected: bool
+    service_url: str
+    latency_ms: float | None
     queue_depth: int
     error_rate: str
     synced_at: datetime
@@ -115,12 +90,10 @@ class EngineOpResult:
     executed_at: datetime
 
 
-# -- 两套引擎的确定性示意数据（serviceUrl 未配置 / 不可达时回退，与前端 data.ts 对齐）--
+# -- 两套引擎的确定性示意数据（serviceUrl 不可达时回退，与前端 data.ts 对齐）--
 
 _ENGINE_PRESETS: dict[str, dict[str, object]] = {
     "freqtrade": {
-        "replicas_desired": 3,
-        "replicas_ready": 3,
         "queue_depth": 3,
         "error_rate": "0.02%",
         "metrics": [
@@ -128,16 +101,6 @@ _ENGINE_PRESETS: dict[str, dict[str, object]] = {
             {"key": "REST 请求 / 分", "value": "1,240", "detail": "P95 延迟 84ms"},
             {"key": "调度队列 · Queue", "value": "3", "detail": "回测 / 同步任务"},
             {"key": "错误率 · Error Rate", "value": "0.02%", "detail": "近 1h · 健康"},
-        ],
-        "pods": [
-            ("freqtrade-orch-7c9d-abc12", "node-sg-1", "Running", "0.42", "612Mi", 0, "6d 4h"),
-            ("freqtrade-orch-7c9d-de345", "node-sg-2", "Running", "0.38", "588Mi", 0, "6d 4h"),
-            ("freqtrade-orch-7c9d-fg678", "node-sg-3", "Running", "0.51", "634Mi", 1, "2d 1h"),
-        ],
-        "resources": [
-            ("CPU", 44, "1.31 / 3.0"),
-            ("内存 Memory", 40, "1.8 / 4.5Gi"),
-            ("网络 I/O", 28, "3.2 MB/s"),
         ],
         "deps": [
             ("Redis Queue", "db", "Healthy", None),
@@ -154,8 +117,6 @@ _ENGINE_PRESETS: dict[str, dict[str, object]] = {
         ],
     },
     "tradingagents": {
-        "replicas_desired": 4,
-        "replicas_ready": 4,
         "queue_depth": 6,
         "error_rate": "0.01%",
         "metrics": [
@@ -163,16 +124,6 @@ _ENGINE_PRESETS: dict[str, dict[str, object]] = {
             {"key": "分析队列 · Queue", "value": "6", "detail": "等待调度"},
             {"key": "Tokens / 分", "value": "24.8K", "detail": "本月 4.8M / 10M"},
             {"key": "平均分析耗时", "value": "9.2s", "detail": "P95 14.6s"},
-        ],
-        "pods": [
-            ("tradingagents-api-5f2a-aa01", "node-sg-2", "Running", "1.12", "1.8Gi", 0, "3d 2h"),
-            ("tradingagents-api-5f2a-bb02", "node-sg-4", "Running", "0.98", "1.6Gi", 0, "3d 2h"),
-            ("tradingagents-api-5f2a-cc03", "node-sg-1", "Running", "1.04", "1.7Gi", 0, "11h"),
-        ],
-        "resources": [
-            ("CPU", 62, "3.75 / 6.0"),
-            ("内存 Memory", 55, "6.2 / 12Gi"),
-            ("Gateway QPS", 34, "3.4 req/s"),
         ],
         "deps": [
             ("Model Gateway", "gateway", "Healthy", "Anthropic"),
@@ -213,47 +164,30 @@ def _probe_service(service_url: str) -> tuple[bool, float | None]:
 
 
 def fetch_runtime_snapshot(engine_key: str, service_url: str = "") -> EngineRuntimeSnapshot:
-    """读取引擎运行时聚合快照。
+    """读取引擎运行时聚合快照（服务连接视图）。
 
-    运行状态经 serviceUrl 探活派生：可达 -> running 并附「服务连接」延迟指标；不可达 -> degraded。
-    未配置 serviceUrl 时回退确定性示意状态。副本 / 队列 / 指标卡为示意（服务连接不暴露编排级数据）。
+    经 serviceUrl 探活派生连接状态与延迟：可达 -> connected + running；不可达 -> degraded；
+    未配置 serviceUrl -> unknown。队列 / 错误率 / 指标卡为运营层示意数据。
     """
     preset = _preset(engine_key)
-    runtime_status = "running"
-    metrics = list(preset["metrics"])  # type: ignore[arg-type]
-    if service_url.strip():
-        reachable, latency = _probe_service(service_url)
-        runtime_status = "running" if reachable else "degraded"
-        if reachable and latency is not None:
-            metrics = [{"key": "服务连接 · Connection", "value": "在线", "detail": f"{latency}ms"}, *metrics]
+    url = service_url.strip()
+    connected = False
+    latency_ms: float | None = None
+    if url:
+        connected, latency_ms = _probe_service(url)
+        runtime_status = "running" if connected else "degraded"
+    else:
+        runtime_status = "unknown"
     return EngineRuntimeSnapshot(
         runtime_status=runtime_status,
-        replicas_desired=int(preset["replicas_desired"]),  # type: ignore[arg-type]
-        replicas_ready=int(preset["replicas_ready"]) if runtime_status == "running" else 0,  # type: ignore[arg-type]
+        connected=connected,
+        service_url=url,
+        latency_ms=latency_ms,
         queue_depth=int(preset["queue_depth"]),  # type: ignore[arg-type]
         error_rate=str(preset["error_rate"]),
         synced_at=datetime.now(UTC),
-        metrics=metrics,
+        metrics=list(preset["metrics"]),  # type: ignore[arg-type]
     )
-
-
-def fetch_pods(engine_key: str) -> list[PodInfo]:
-    """列出引擎运行实例（示意数据）。
-
-    服务连接模型不暴露主机 / 编排级实例清单；待引擎 API 暴露实例端点后再接真。
-    """
-    return [
-        PodInfo(name=name, node=node, status=status, cpu=cpu, mem=mem, restarts=restarts, uptime=uptime)
-        for name, node, status, cpu, mem, restarts, uptime in _preset(engine_key)["pods"]  # type: ignore[union-attr]
-    ]
-
-
-def fetch_resources(engine_key: str) -> list[ResourceUsage]:
-    """读取引擎资源用量（示意数据，需引擎 API / 监控后端暴露指标后接真）。"""
-    return [
-        ResourceUsage(label=label, percent=percent, value=value)
-        for label, percent, value in _preset(engine_key)["resources"]  # type: ignore[union-attr]
-    ]
 
 
 def fetch_dependencies(engine_key: str) -> list[DependencyHealth]:
@@ -264,11 +198,11 @@ def fetch_dependencies(engine_key: str) -> list[DependencyHealth]:
     ]
 
 
-def fetch_logs(engine_key: str, level: str | None = None, limit: int = 100) -> list[PodLogEntry]:
+def fetch_logs(engine_key: str, level: str | None = None, limit: int = 100) -> list[EngineLogEntry]:
     """拉取引擎日志（示意数据，需引擎 API 暴露日志端点后接真）。"""
     base = datetime.now(UTC)
     entries = [
-        PodLogEntry(timestamp=base - timedelta(minutes=3 * index), level=lvl, message=msg)
+        EngineLogEntry(timestamp=base - timedelta(minutes=3 * index), level=lvl, message=msg)
         for index, (lvl, msg) in enumerate(_preset(engine_key)["logs"])  # type: ignore[union-attr]
     ]
     if level and level.lower() != "all":
@@ -282,7 +216,9 @@ def fetch_logs(engine_key: str, level: str | None = None, limit: int = 100) -> l
 def test_connection(engine_key: str, service_url: str) -> EngineOpResult:
     """测试引擎服务连接：GET 引擎暴露的 serviceUrl，任意 HTTP 响应即视为在线并计时。"""
     if not service_url.strip():
-        return _build_op_result(engine_key, "test_connection", "unknown", "未配置服务地址（connection_config.serviceUrl）", ok=False)
+        return _build_op_result(
+            engine_key, "test_connection", "unknown", "未配置服务地址（connection_config.serviceUrl）", ok=False
+        )
     reachable, latency = _probe_service(service_url)
     if reachable:
         message = f"连接正常 · {latency}ms" if latency is not None else "连接正常"
