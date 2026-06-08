@@ -1,15 +1,40 @@
-"""Kubernetes / 容器编排集成 stub（引擎管理专用）。
+"""Kubernetes / 容器编排集成（引擎管理：只读监控接真 + 优雅回退）。
 
-返回拟真 mock 数据；函数签名按真实集群运维预留：真实实现时这里会调用 Kubernetes
-API（Deployment/Pod/HPA 读写、scale/restart/drain/redeploy、紧急停机与销毁重建），
-以及引擎自身的内网 REST 健康检查端点。当前阶段不触碰任何真实集群、不执行任何真实
-运维操作，Pod / 资源 / 依赖 / 日志全为模拟。
+config 驱动的真实调用骨架 + 优雅回退：
+- 真实路径（仅 in-cluster）：当 ``K8S_IN_CLUSTER`` 为真且容器内挂载了 serviceaccount
+  token 时，用 httpx 调 K8s API server REST：
+    - API base：``https://kubernetes.default.svc``
+    - Bearer token：``/var/run/secrets/kubernetes.io/serviceaccount/token``
+    - CA 证书：``/var/run/secrets/kubernetes.io/serviceaccount/ca.crt``（作为 TLS 校验根）
+    - namespace：优先读 ``/var/run/secrets/kubernetes.io/serviceaccount/namespace``，
+      回落 ``settings.K8S_NAMESPACE``
+    - 列 Pod：``GET /api/v1/namespaces/{ns}/pods?labelSelector=app={deployment}``
+    - 取 Deployment：``GET /apis/apps/v1/namespaces/{ns}/deployments/{deployment}``
+  读到的运行时快照 / Pod 列表 / 副本数由真实集群状态派生。**需在 K8s 集群内运行 +
+  serviceaccount 具备对应 namespace 的 pods / deployments 读权限（RBAC）方能联通。**
+- 回退路径：非 in-cluster / 无 token / 任一请求失败，一律回退到原确定性拟真数据（与前端
+  data.ts 对齐的两套引擎预置），保证本地与联调可用。
+
+范围：本次仅监控读取（runtime_snapshot / pods / resources / dependencies / logs）接真；
+资源用量（metrics-server）、依赖探测、Pod 日志读取需要额外后端（Prometheus / 集中日志），
+in-cluster 也以确定性数据呈现。所有运维写操作（scale / restart / drain / redeploy /
+emergency_stop / tear_down 等）属集群变更，保持 stub、不触碰真实集群。
+
+函数保持同步签名（调用方在 async ``before()`` 内同步调用，不 await），内部真实路径用
+``httpx.Client`` 同步客户端，不改变调用方契约。
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import httpx
+
+from configs import get_settings
+from libs.logger import logger
 
 __all__ = (
     "DependencyHealth",
@@ -33,10 +58,18 @@ __all__ = (
     "trigger_restart",
 )
 
+# in-cluster serviceaccount 标准挂载路径（容器内由 kubelet 自动注入）。
+_SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+_TOKEN_PATH = f"{_SA_DIR}/token"
+_CA_PATH = f"{_SA_DIR}/ca.crt"
+_NAMESPACE_PATH = f"{_SA_DIR}/namespace"
+_API_BASE = "https://kubernetes.default.svc"
+_HTTP_TIMEOUT = 6.0
+
 
 @dataclass(slots=True)
 class PodInfo:
-    """单个 Pod 运行时信息（mock）。"""
+    """单个 Pod 运行时信息。"""
 
     name: str
     node: str
@@ -49,7 +82,7 @@ class PodInfo:
 
 @dataclass(slots=True)
 class ResourceUsage:
-    """单项资源用量（mock，含百分比与可读文案）。"""
+    """单项资源用量（含百分比与可读文案）。"""
 
     label: str
     percent: int
@@ -58,7 +91,7 @@ class ResourceUsage:
 
 @dataclass(slots=True)
 class DependencyHealth:
-    """单个外部依赖的健康度（mock）。"""
+    """单个外部依赖的健康度。"""
 
     name: str
     kind: str
@@ -68,7 +101,7 @@ class DependencyHealth:
 
 @dataclass(slots=True)
 class PodLogEntry:
-    """单条引擎日志（mock）。"""
+    """单条引擎日志。"""
 
     timestamp: datetime
     level: str
@@ -77,7 +110,7 @@ class PodLogEntry:
 
 @dataclass(slots=True)
 class EngineRuntimeSnapshot:
-    """引擎运行时聚合快照（mock）。"""
+    """引擎运行时聚合快照。"""
 
     runtime_status: str
     replicas_desired: int
@@ -100,7 +133,7 @@ class EngineOpResult:
     executed_at: datetime
 
 
-# -- 预置两套引擎的拟真快照（与前端 data.ts 对齐：freqtrade / tradingagents）--
+# -- 预置两套引擎的拟真快照（回退数据，与前端 data.ts 对齐：freqtrade / tradingagents）--
 
 _ENGINE_PRESETS: dict[str, dict[str, object]] = {
     "freqtrade": {
@@ -185,9 +218,118 @@ def _preset(engine_key: str) -> dict[str, object]:
     return _ENGINE_PRESETS.get(engine_key, _ENGINE_PRESETS["freqtrade"])
 
 
+# ============================ in-cluster 真实访问工具 ============================
+
+
+def _read_text(path: str) -> str | None:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return None
+
+
+def _in_cluster_token() -> str | None:
+    """仅当配置开启 in-cluster 且 token 文件存在时返回 Bearer token，否则 None（走回退）。"""
+    if not getattr(get_settings(), "K8S_IN_CLUSTER", False):
+        return None
+    token = _read_text(_TOKEN_PATH)
+    return token or None
+
+
+def _namespace() -> str:
+    """优先用 serviceaccount 注入的 namespace 文件，回落 settings.K8S_NAMESPACE。"""
+    return _read_text(_NAMESPACE_PATH) or getattr(get_settings(), "K8S_NAMESPACE", "stratark-prod")
+
+
+def _verify() -> str | bool:
+    """TLS 校验：存在挂载的 CA 证书则用其作为根，否则退回 httpx 默认校验。"""
+    return _CA_PATH if os.path.exists(_CA_PATH) else True
+
+
+def _api_get(path: str, params: dict[str, Any] | None = None) -> Any:
+    """向 K8s API server 发起带 Bearer token 的 GET。无 token 时返回 None（不发请求）。"""
+    token = _in_cluster_token()
+    if token is None:
+        return None
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    with httpx.Client(timeout=_HTTP_TIMEOUT, verify=_verify()) as client:
+        response = client.get(f"{_API_BASE}{path}", params=params, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+
+def _deployment_name(engine_key: str) -> str:
+    return str(_preset(engine_key)["deployment"])
+
+
+def _format_uptime(start_time: str | None) -> str:
+    """ISO8601 启动时间 -> 紧凑 uptime 文案（如 ``6d 4h`` / ``11h`` / ``2m``）。"""
+    if not start_time:
+        return "-"
+    try:
+        started = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+    except ValueError:
+        return "-"
+    delta = datetime.now(UTC) - started
+    days = delta.days
+    hours, remainder = divmod(delta.seconds, 3600)
+    minutes = remainder // 60
+    if days > 0:
+        return f"{days}d {hours}h"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def _pod_from_item(item: dict[str, Any]) -> PodInfo:
+    """K8s Pod 对象 -> PodInfo（资源用量需 metrics-server，此处留占位 ``-``）。"""
+    metadata = item.get("metadata", {})
+    spec = item.get("spec", {})
+    status = item.get("status", {})
+    container_statuses = status.get("containerStatuses", []) or []
+    restarts = sum(int(cs.get("restartCount", 0) or 0) for cs in container_statuses)
+    return PodInfo(
+        name=str(metadata.get("name", "")),
+        node=str(spec.get("nodeName", "") or "-"),
+        status=str(status.get("phase", "Unknown")),
+        cpu="-",
+        mem="-",
+        restarts=restarts,
+        uptime=_format_uptime(status.get("startTime")),
+    )
+
+
+# ============================ 监控读取（真实路径失败回退 demo） ============================
+
+
 def fetch_runtime_snapshot(engine_key: str) -> EngineRuntimeSnapshot:
-    """读取引擎运行时聚合快照（mock）。真实实现：聚合 Deployment status + 指标后端。"""
+    """读取引擎运行时聚合快照。
+
+    真实路径（in-cluster）：读 Deployment ``status`` 取 replicas / readyReplicas，运行状态
+    由就绪副本数派生（队列深度 / 错误率 / 指标卡需指标后端，仍以确定性数据补全）。
+    无 token / 失败时回退确定性数据。
+    """
     preset = _preset(engine_key)
+    try:
+        ns = _namespace()
+        data = _api_get(f"/apis/apps/v1/namespaces/{ns}/deployments/{_deployment_name(engine_key)}")
+        if isinstance(data, dict) and data.get("status") is not None:
+            status = data["status"]
+            desired = int(status.get("replicas", preset["replicas_desired"]) or 0)  # type: ignore[arg-type]
+            ready = int(status.get("readyReplicas", 0) or 0)
+            runtime_status = "running" if ready > 0 and ready >= desired else "degraded"
+            return EngineRuntimeSnapshot(
+                runtime_status=runtime_status,
+                replicas_desired=desired,
+                replicas_ready=ready,
+                queue_depth=int(preset["queue_depth"]),  # type: ignore[arg-type]
+                error_rate=str(preset["error_rate"]),
+                synced_at=datetime.now(UTC),
+                metrics=list(preset["metrics"]),  # type: ignore[arg-type]
+            )
+    except Exception as exc:
+        logger.warning(f"kubernetes.fetch_runtime_snapshot fallback to demo: {exc}")
     return EngineRuntimeSnapshot(
         runtime_status="running",
         replicas_desired=int(preset["replicas_desired"]),  # type: ignore[arg-type]
@@ -200,7 +342,23 @@ def fetch_runtime_snapshot(engine_key: str) -> EngineRuntimeSnapshot:
 
 
 def fetch_pods(engine_key: str) -> list[PodInfo]:
-    """列出引擎 Pod（mock）。真实实现：调用 K8s API 按 label selector 查询 Pod。"""
+    """列出引擎 Pod。
+
+    真实路径（in-cluster）：``GET /api/v1/namespaces/{ns}/pods`` 按 ``app={deployment}``
+    label selector 过滤。无 token / 失败 / 空结果时回退确定性数据。
+    """
+    try:
+        ns = _namespace()
+        data = _api_get(
+            f"/api/v1/namespaces/{ns}/pods",
+            {"labelSelector": f"app={_deployment_name(engine_key)}"},
+        )
+        if isinstance(data, dict):
+            items = data.get("items", [])
+            if isinstance(items, list) and items:
+                return [_pod_from_item(item) for item in items]
+    except Exception as exc:
+        logger.warning(f"kubernetes.fetch_pods fallback to demo: {exc}")
     return [
         PodInfo(name=name, node=node, status=status, cpu=cpu, mem=mem, restarts=restarts, uptime=uptime)
         for name, node, status, cpu, mem, restarts, uptime in _preset(engine_key)["pods"]  # type: ignore[union-attr]
@@ -208,7 +366,11 @@ def fetch_pods(engine_key: str) -> list[PodInfo]:
 
 
 def fetch_resources(engine_key: str) -> list[ResourceUsage]:
-    """读取引擎资源用量（mock）。真实实现：读取 metrics-server / Prometheus。"""
+    """读取引擎资源用量（确定性数据）。
+
+    真实用量需 metrics-server / Prometheus（``GET /apis/metrics.k8s.io/v1beta1/...``），
+    非核心 K8s API、依赖额外组件，本次不接真，统一返回确定性数据。
+    """
     return [
         ResourceUsage(label=label, percent=percent, value=value)
         for label, percent, value in _preset(engine_key)["resources"]  # type: ignore[union-attr]
@@ -216,7 +378,11 @@ def fetch_resources(engine_key: str) -> list[ResourceUsage]:
 
 
 def fetch_dependencies(engine_key: str) -> list[DependencyHealth]:
-    """读取引擎外部依赖健康度（mock）。真实实现：探测 Redis/PG/网关/行情源等。"""
+    """读取引擎外部依赖健康度（确定性数据）。
+
+    真实探测需逐一连 Redis / PG / 网关 / 行情源（跨服务、各异），不在 K8s API 范围内，
+    本次不接真，统一返回确定性数据。
+    """
     return [
         DependencyHealth(name=name, kind=kind, status=status, latency=latency)
         for name, kind, status, latency in _preset(engine_key)["deps"]  # type: ignore[union-attr]
@@ -224,7 +390,11 @@ def fetch_dependencies(engine_key: str) -> list[DependencyHealth]:
 
 
 def fetch_logs(engine_key: str, level: str | None = None, limit: int = 100) -> list[PodLogEntry]:
-    """拉取引擎日志（mock）。真实实现：读取 Pod stdout 或集中式日志后端。"""
+    """拉取引擎日志（确定性数据）。
+
+    真实 Pod 日志为纯文本流（``GET .../pods/{pod}/log``，非结构化、无 level 字段），与本
+    DTO 的结构化级别不直接对应，需集中式日志后端解析，本次不接真，统一返回确定性数据。
+    """
     base = datetime.now(UTC)
     entries = [
         PodLogEntry(timestamp=base - timedelta(minutes=3 * index), level=lvl, message=msg)
@@ -235,44 +405,49 @@ def fetch_logs(engine_key: str, level: str | None = None, limit: int = 100) -> l
     return entries[:limit]
 
 
+# ============================ 运维写操作（stub，集群变更不接真） ============================
+# 以下均为集群变更类操作（patch / rollout / scale / 删除重建），属危险操作，保持 stub，
+# 不触碰真实集群、不执行真实运维。注释保留真实实现路径供后续按需接入。
+
+
 def test_connection(engine_key: str, service_url: str) -> EngineOpResult:
-    """测试引擎内网连接（mock）。真实实现：请求引擎健康检查端点并计时。"""
+    """测试引擎内网连接（stub）。真实实现：请求引擎健康检查端点并计时。"""
     return _build_op_result(engine_key, "test_connection", "running", "连接正常 · 84ms")
 
 
 def scale_engine(engine_key: str, replicas: int) -> EngineOpResult:
-    """扩缩容（mock）。真实实现：patch Deployment.spec.replicas。"""
+    """扩缩容（stub）。真实实现：patch Deployment.spec.replicas。"""
     return _build_op_result(engine_key, "scale", "running", f"已提交扩缩容 · 目标 {replicas} 副本")
 
 
 def trigger_restart(engine_key: str) -> EngineOpResult:
-    """滚动重启（mock）。真实实现：patch rollout restart 注解逐个重建 Pod。"""
+    """滚动重启（stub）。真实实现：patch rollout restart 注解逐个重建 Pod。"""
     return _build_op_result(engine_key, "restart", "running", "已触发滚动重启")
 
 
 def reload_engine(engine_key: str) -> EngineOpResult:
-    """热重载配置（mock）。真实实现：调用引擎 reload 端点或重载 ConfigMap。"""
+    """热重载配置（stub）。真实实现：调用引擎 reload 端点或重载 ConfigMap。"""
     return _build_op_result(engine_key, "reload", "running", "配置已热重载")
 
 
 def drain_engine(engine_key: str) -> EngineOpResult:
-    """排空并重新调度（mock）。真实实现：cordon + drain 节点后重新调度。"""
+    """排空并重新调度（stub）。真实实现：cordon + drain 节点后重新调度。"""
     return _build_op_result(engine_key, "drain", "running", "已开始排空")
 
 
 def trigger_redeploy(engine_key: str, image: str | None = None) -> EngineOpResult:
-    """拉取镜像并重建（mock）。真实实现：更新镜像标签触发滚动发布。"""
+    """拉取镜像并重建（stub）。真实实现：更新镜像标签触发滚动发布。"""
     suffix = f" · {image}" if image else ""
     return _build_op_result(engine_key, "redeploy", "running", f"已开始重建{suffix}")
 
 
 def emergency_stop_engine(engine_key: str) -> EngineOpResult:
-    """紧急停机（mock，危险操作）。真实实现：将副本缩为 0 并挂起运行任务。"""
+    """紧急停机（stub，危险操作）。真实实现：将副本缩为 0 并挂起运行任务。"""
     return _build_op_result(engine_key, "emergency_stop", "stopped", "已紧急停机")
 
 
 def tear_down_engine(engine_key: str) -> EngineOpResult:
-    """销毁并重建服务（mock，危险操作）。真实实现：删除 Deployment 后按配置重建。"""
+    """销毁并重建服务（stub，危险操作）。真实实现：删除 Deployment 后按配置重建。"""
     return _build_op_result(engine_key, "tear_down", "running", "已开始重建服务")
 
 

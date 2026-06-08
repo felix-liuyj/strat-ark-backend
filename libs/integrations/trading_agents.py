@@ -1,9 +1,10 @@
-"""TradingAgents 多智能体投研集成 stub。
+"""TradingAgents 多智能体投研集成。
 
-返回拟真 mock 数据；函数签名按真实 TradingAgents 多智能体框架预留：真实实现时
-这里会编排八类 Agent（Market / Technical / Sentiment / Bull / Bear / Trader /
-Risk / Portfolio）协作辩论，并通过 LLM 网关产出结构化研报。当前阶段不调用任何
-LLM、不发起真实网络请求，仅返回确定性的拟真结构化结论。
+编排八类 Agent（Market / Technical / Sentiment / Bull / Bear / Trader / Risk /
+Portfolio）的研报产出：配置了 LLM 网关（``AI_GATEWAY_API_KEY``）时，经 httpx 调用
+网关（provider-neutral：Anthropic Messages / OpenAI 兼容）产出结构化研报；未配置或
+任一步失败时，回退到确定性拟真研报（同输入同输出，保证离线 / 联调可复现）。数值价位
+（入场 / 止损 / 止盈）始终由确定性骨架提供，LLM 仅丰富叙事与多空研判。
 
 约定：AI 只产出**辅助决策**结论，绝不直接下单；是否进入实盘由信号状态机 + 风控
 规则约束（见 view_models/signals）。
@@ -12,9 +13,16 @@ LLM、不发起真实网络请求，仅返回确定性的拟真结构化结论�
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
+
+import httpx
+
+from configs import get_settings
+from libs.logger import logger
 
 __all__ = (
     "AgentOpinion",
@@ -181,11 +189,11 @@ def _build_market_agents(symbol: str, bull_score: int) -> list[AgentOpinion]:
     ]
 
 
-def run_market_analysis(symbol: str, timeframe: str) -> MarketAnalysisResult:
-    """运行多智能体市场分析（mock，结构化研报）。
+def _demo_market_analysis(symbol: str, timeframe: str) -> MarketAnalysisResult:
+    """确定性市场分析（回退 / 数值骨架）。
 
-    真实实现：编排八类 Agent 协作辩论并经 LLM 网关产出结构化结论；本 stub 用
-    确定性种子派生信心/多空分值，保证同 symbol+timeframe 稳定可回放。
+    用确定性种子派生信心 / 多空分值与价位，保证同 symbol+timeframe 稳定可回放；
+    LLM 网关可用时其叙事字段会被真实研报覆盖，数值价位仍沿用此处骨架。
     """
     unit = _deterministic_unit(f"{symbol}:{timeframe}:market")
     confidence = round(0.5 + unit * 0.35, 2)
@@ -219,11 +227,10 @@ def run_market_analysis(symbol: str, timeframe: str) -> MarketAnalysisResult:
     )
 
 
-def review_signal(symbol: str, direction: str, confidence: float, risk_level: str) -> SignalReviewResult:
-    """对单条信号做多智能体复核（mock）。
+def _demo_review_signal(symbol: str, direction: str, confidence: float, risk_level: str) -> SignalReviewResult:
+    """确定性信号复核（回退）。
 
-    真实实现：Risk / Trader / Portfolio 等 Agent 结合实时行情与持仓约束复核信号；
-    本 stub 依据传入信号自身的方向与置信度给出确定性建议。
+    依据传入信号自身的方向与置信度给出确定性建议；LLM 网关可用时叙事字段被覆盖。
     """
     approve = confidence >= 0.6 and risk_level != "high"
     return SignalReviewResult(
@@ -262,17 +269,16 @@ def review_signal(symbol: str, direction: str, confidence: float, risk_level: st
     )
 
 
-def review_backtest(
+def _demo_review_backtest(
     strategy_name: str,
     symbol: str,
     total_return: float,
     max_drawdown: float,
     sharpe: float,
 ) -> BacktestReviewResult:
-    """对回测结果做多智能体复盘归因（mock）。
+    """确定性回测复盘归因（回退）。
 
-    真实实现：结合权益曲线、回撤分布与交易明细做归因，并经 LLM 网关产出改进建议；
-    本 stub 依据传入的总收益 / 回撤 / 夏普给出确定性归因与建议。
+    依据传入的总收益 / 回撤 / 夏普给出确定性归因与建议；LLM 网关可用时叙事字段被覆盖。
     """
     profitable = total_return > 0 and sharpe >= 1.0
     return BacktestReviewResult(
@@ -310,3 +316,212 @@ def review_backtest(
         ],
         generated_at=datetime.now(UTC),
     )
+
+
+# ============================ LLM 网关（provider-neutral，失败回退 demo） ============================
+
+_HTTP_TIMEOUT = 60.0
+_MAX_TOKENS = 4096
+_SYSTEM_PROMPT = (
+    "你是 TradingAgents 多智能体投研框架的协调器，编排八类 Agent（market / technical / "
+    "sentiment / bull / bear / trader / risk / portfolio）协作辩论。你只产出辅助决策结论，"
+    "绝不建议直接下单。严格只输出一个 JSON 对象，不要任何额外解释或代码围栏。"
+)
+_MARKET_STATES = {"trend_up", "range", "trend_down"}
+_MARKET_SIGNALS = {"long", "watch", "avoid"}
+_RISK_LEVELS = {"low", "medium", "high"}
+
+
+def _gateway_ready() -> bool:
+    """是否配置了可用的 LLM 网关密钥（未配置即回退确定性研报）。"""
+    return bool(getattr(get_settings(), "AI_GATEWAY_API_KEY", None))
+
+
+def _extract_json(text: str) -> dict[str, Any] | None:
+    """从模型文本中截取首个 JSON 对象（容忍 ``` 代码围栏与前后缀）。"""
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        data = json.loads(text[start : end + 1])
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+async def _llm_json(user_prompt: str) -> dict[str, Any] | None:
+    """调用配置的 LLM 网关产出结构化 JSON；未配置或任一步失败返回 None（调用方回退）。"""
+    settings = get_settings()
+    api_key = settings.AI_GATEWAY_API_KEY
+    if not api_key:
+        return None
+    provider = (settings.AI_GATEWAY_PROVIDER or "anthropic").strip().lower()
+    model = settings.AI_GATEWAY_MODEL
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            if provider == "anthropic":
+                base = (settings.AI_GATEWAY_URL or "https://api.anthropic.com").rstrip("/")
+                url = base if base.endswith("/v1/messages") else f"{base}/v1/messages"
+                resp = await client.post(
+                    url,
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": _MAX_TOKENS,
+                        "system": _SYSTEM_PROMPT,
+                        "messages": [{"role": "user", "content": user_prompt}],
+                    },
+                )
+                resp.raise_for_status()
+                blocks = resp.json().get("content", [])
+                text = next((b.get("text", "") for b in blocks if b.get("type") == "text"), "")
+            else:
+                base = (settings.AI_GATEWAY_URL or "https://api.openai.com").rstrip("/")
+                url = base if base.endswith("/chat/completions") else f"{base}/v1/chat/completions"
+                resp = await client.post(
+                    url,
+                    headers={"Authorization": f"Bearer {api_key}", "content-type": "application/json"},
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": _SYSTEM_PROMPT},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "response_format": {"type": "json_object"},
+                    },
+                )
+                resp.raise_for_status()
+                text = resp.json()["choices"][0]["message"]["content"]
+        return _extract_json(text)
+    except Exception as exc:
+        logger.warning(f"trading_agents LLM gateway fallback: {exc}")
+        return None
+
+
+def _as_float(value: Any, default: float, lo: float, hi: float) -> float:
+    try:
+        return round(min(max(float(value), lo), hi), 2)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_int(value: Any, default: int, lo: int, hi: int) -> int:
+    try:
+        return int(min(max(float(value), lo), hi))
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_agents(raw: Any, fallback: list[AgentOpinion]) -> list[AgentOpinion]:
+    """把 LLM 返回的 agents 转为 AgentOpinion（角色校验 + 截断）；无有效项则回退确定性观点。"""
+    if not isinstance(raw, list):
+        return fallback
+    valid_roles = {r.value: r for r in AgentRoleEnum}
+    out: list[AgentOpinion] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        role = valid_roles.get(str(item.get("role", "")).strip().lower())
+        summary = str(item.get("summary", "")).strip()
+        if role is None or not summary:
+            continue
+        points = item.get("points", [])
+        out.append(
+            AgentOpinion(
+                role=role,
+                name=_AGENT_NAMES[role],
+                stance=str(item.get("stance", "")).strip()[:40] or "Neutral",
+                summary=summary,
+                points=[str(p).strip() for p in points if str(p).strip()][:6] if isinstance(points, list) else [],
+            )
+        )
+    return out or fallback
+
+
+async def run_market_analysis(symbol: str, timeframe: str) -> MarketAnalysisResult:
+    """多智能体市场分析：LLM 网关可用时产出真实研报，否则回退确定性研报。"""
+    base = _demo_market_analysis(symbol, timeframe)
+    if not _gateway_ready():
+        return base
+    prompt = (
+        f"对交易对 {symbol}（周期 {timeframe}）做多智能体市场研判。"
+        f"参考数值骨架：入场区间 {base.entry_zone}，止损 {base.stop_loss}，止盈 {base.take_profit}。"
+        "输出 JSON，键："
+        '{"marketState":"trend_up|range|trend_down","signal":"long|watch|avoid",'
+        '"confidence":0~1,"bullScore":0~100,"bearScore":0~100,"summary":"中文总结",'
+        '"agents":[{"role":"market|technical|sentiment|bull|bear|trader|risk|portfolio",'
+        '"stance":"短语","summary":"中文","points":["要点"]}]}，agents 需覆盖全部八类角色。'
+    )
+    data = await _llm_json(prompt)
+    if data is None:
+        return base
+    bull = _as_int(data.get("bullScore"), base.bull_score, 0, 100)
+    state = str(data.get("marketState", "")).strip().lower()
+    signal = str(data.get("signal", "")).strip().lower()
+    base.market_state = state if state in _MARKET_STATES else base.market_state
+    base.signal = signal if signal in _MARKET_SIGNALS else base.signal
+    base.confidence = _as_float(data.get("confidence"), base.confidence, 0.0, 1.0)
+    base.bull_score = bull
+    base.bear_score = _as_int(data.get("bearScore"), 100 - bull, 0, 100)
+    base.summary = str(data.get("summary", "")).strip() or base.summary
+    base.agents = _coerce_agents(data.get("agents"), base.agents)
+    return base
+
+
+async def review_signal(symbol: str, direction: str, confidence: float, risk_level: str) -> SignalReviewResult:
+    """信号复核：LLM 网关可用时产出真实复核，否则回退确定性结论。"""
+    base = _demo_review_signal(symbol, direction, confidence, risk_level)
+    if not _gateway_ready():
+        return base
+    prompt = (
+        f"对 {symbol} 的 {direction} 信号（置信度 {confidence}，风险 {risk_level}）做多智能体复核。"
+        '输出 JSON：{"recommendation":"approve|review","confidence":0~1,'
+        '"riskLevel":"low|medium|high","summary":"中文","agents":[{"role":"market|technical|'
+        'sentiment|bull|bear|trader|risk|portfolio","stance":"短语","summary":"中文","points":["要点"]}]}。'
+        "复核通过不等于自动下单。"
+    )
+    data = await _llm_json(prompt)
+    if data is None:
+        return base
+    rec = str(data.get("recommendation", "")).strip().lower()
+    risk = str(data.get("riskLevel", "")).strip().lower()
+    base.recommendation = rec if rec in {"approve", "review"} else base.recommendation
+    base.confidence = _as_float(data.get("confidence"), base.confidence, 0.0, 1.0)
+    base.risk_level = risk if risk in _RISK_LEVELS else base.risk_level
+    base.summary = str(data.get("summary", "")).strip() or base.summary
+    base.agents = _coerce_agents(data.get("agents"), base.agents)
+    return base
+
+
+async def review_backtest(
+    strategy_name: str,
+    symbol: str,
+    total_return: float,
+    max_drawdown: float,
+    sharpe: float,
+) -> BacktestReviewResult:
+    """回测复盘：LLM 网关可用时产出真实归因，否则回退确定性结论。"""
+    base = _demo_review_backtest(strategy_name, symbol, total_return, max_drawdown, sharpe)
+    if not _gateway_ready():
+        return base
+    prompt = (
+        f"对策略「{strategy_name}」在 {symbol} 的回测做归因复盘："
+        f"总收益 {total_return}%，最大回撤 {max_drawdown}%，夏普 {sharpe}。"
+        '输出 JSON：{"verdict":"中文结论","strength":"中文","weakness":"中文",'
+        '"suggestion":"中文改进建议","summary":"中文","agents":[{"role":"market|technical|'
+        'sentiment|bull|bear|trader|risk|portfolio","stance":"短语","summary":"中文","points":["要点"]}]}。'
+    )
+    data = await _llm_json(prompt)
+    if data is None:
+        return base
+    base.verdict = str(data.get("verdict", "")).strip() or base.verdict
+    base.strength = str(data.get("strength", "")).strip() or base.strength
+    base.weakness = str(data.get("weakness", "")).strip() or base.weakness
+    base.suggestion = str(data.get("suggestion", "")).strip() or base.suggestion
+    base.summary = str(data.get("summary", "")).strip() or base.summary
+    base.agents = _coerce_agents(data.get("agents"), base.agents)
+    return base

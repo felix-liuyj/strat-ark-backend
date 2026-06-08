@@ -72,6 +72,20 @@ class Settings(BaseSettings):
     MARKET_DATA_WS_URL: str | None = None
     MARKET_DATA_API_KEY: str | None = None
 
+    # AI 投研 LLM 网关（TradingAgents 多智能体研报；provider-neutral）
+    # 留空即回退确定性拟真研报、不发起任何 LLM 请求；AI 仅产出辅助决策，绝不直接下单。
+    # provider: anthropic（Messages API）| openai（OpenAI 兼容 chat/completions 网关）。
+    AI_GATEWAY_PROVIDER: str = "anthropic"
+    AI_GATEWAY_URL: str | None = None
+    AI_GATEWAY_API_KEY: str | None = None
+    AI_GATEWAY_MODEL: str = "claude-opus-4-8"
+
+    # 交易所私有 REST（账户信息查询：余额 / 权限，非下单）
+    # 默认 Binance 现货 REST；GET /api/v3/account 需 HMAC-SHA256 签名 + X-MBX-APIKEY 头。
+    # 仅当 view_model 能拿到可用的明文 api_key + api_secret 时才发起真实请求，
+    # 否则（掩码 key / 空 secret / 占位密文）一律回退确定性拟真数据。
+    EXCHANGE_API_BASE: str = "https://api.binance.com"
+
     # 集群 / 引擎运维（Kubernetes）
     K8S_NAMESPACE: str = "stratark-prod"
     K8S_IN_CLUSTER: bool = False

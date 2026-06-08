@@ -102,7 +102,7 @@ class AnalyzeMarketViewModel(BaseViewModel):
             self.illegal_parameters("交易对不能为空")
             return
 
-        result = trading_agents.run_market_analysis(symbol=symbol, timeframe=self.form.timeframe.strip() or "1h")
+        result = await trading_agents.run_market_analysis(symbol=symbol, timeframe=self.form.timeframe.strip() or "1h")
         report = AgentReport(
             user_id=int(self.checker.user_id),
             report_type=AgentReportTypeEnum.MARKET_ANALYSIS,
@@ -153,7 +153,7 @@ class ReviewSignalViewModel(BaseViewModel):
             self.not_found("信号不存在")
             return
 
-        result = trading_agents.review_signal(
+        result = await trading_agents.review_signal(
             symbol=signal.symbol,
             direction=signal.direction,
             confidence=signal.confidence,
@@ -206,7 +206,7 @@ class ReviewBacktestReportViewModel(BaseViewModel):
             self.illegal_parameters("回测尚未完成，无法复盘")
             return
 
-        result = trading_agents.review_backtest(
+        result = await trading_agents.review_backtest(
             strategy_name=task.strategy_name,
             symbol=task.symbol,
             total_return=task.total_return,
