@@ -60,7 +60,7 @@ class MarketOverviewViewModel(BaseViewModel):
 
     async def before(self) -> None:
         await super().before()
-        overview = market_data.get_market_overview()
+        overview = await market_data.get_market_overview()
         data = MarketOverviewResponseData(
             totalMarketCap=overview.total_market_cap,
             totalMarketCapChangePct=overview.total_market_cap_change_pct,
@@ -83,7 +83,7 @@ class ListTickersViewModel(BaseViewModel):
 
     async def before(self) -> None:
         await super().before()
-        tickers = market_data.list_tickers()
+        tickers = await market_data.list_tickers()
         if self.market_type and self.market_type != "all":
             tickers = [t for t in tickers if t.market_type == self.market_type]
         self.operating_successfully([_ticker_to_response(t) for t in tickers])
@@ -98,7 +98,7 @@ class TopMoversViewModel(BaseViewModel):
 
     async def before(self) -> None:
         await super().before()
-        gainers, losers = market_data.get_top_movers(self.limit)
+        gainers, losers = await market_data.get_top_movers(self.limit)
         data = TopMoversResponseData(
             gainers=[_ticker_to_response(t) for t in gainers],
             losers=[_ticker_to_response(t) for t in losers],
@@ -115,7 +115,7 @@ class ListHeatmapViewModel(BaseViewModel):
     async def before(self) -> None:
         await super().before()
         # 热力图为「币种 -> 涨跌幅」的轻量映射，直接返回字典列表。
-        data = [{"symbol": sym, "changePct": pct} for sym, pct in market_data.get_heatmap()]
+        data = [{"symbol": sym, "changePct": pct} for sym, pct in await market_data.get_heatmap()]
         self.operating_successfully(data)
 
 
@@ -128,14 +128,14 @@ class GetMarketDetailViewModel(BaseViewModel):
 
     async def before(self) -> None:
         await super().before()
-        detail = market_data.get_ticker_detail(self.symbol)
+        detail = await market_data.get_ticker_detail(self.symbol)
         if detail is None:
             self.not_found("交易对不存在")
             return
         ticker, snapshot = detail
-        candles = market_data.build_candles(self.symbol)
-        order_book = market_data.get_order_book(self.symbol)
-        tape = market_data.get_trade_tape(self.symbol)
+        candles = await market_data.build_candles(self.symbol)
+        order_book = await market_data.get_order_book(self.symbol)
+        tape = await market_data.get_trade_tape(self.symbol)
 
         data = MarketDetailResponseData(
             ticker=_ticker_to_response(ticker),
@@ -188,7 +188,7 @@ class ListWatchlistViewModel(BaseViewModel):
         ).all()
         result: list[MarketTickerResponseData] = []
         for item in items:
-            ticker = market_data.get_ticker(item.symbol)
+            ticker = await market_data.get_ticker(item.symbol)
             if ticker is not None:
                 result.append(_ticker_to_response(ticker))
         self.operating_successfully(result)
@@ -207,7 +207,7 @@ class AddWatchlistViewModel(BaseViewModel):
         await super().before()
         self.checker.require_auth()
         symbol = self.form.symbol.strip().upper()
-        if market_data.get_ticker(symbol) is None:
+        if await market_data.get_ticker(symbol) is None:
             self.illegal_parameters("交易对不存在")
             return
 

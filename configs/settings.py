@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     SMTP_USE_SSL: bool = True
 
     # 行情数据源
+    # REST base 默认 Binance 公共行情（无需密钥）；可覆盖为自建代理 / 镜像以规避区域封锁。
+    MARKET_DATA_REST_URL: str = "https://api.binance.com"
     MARKET_DATA_WS_URL: str | None = None
     MARKET_DATA_API_KEY: str | None = None
 
