@@ -16,10 +16,12 @@ from models.subscription import (
 )
 
 __all__ = (
+    "CheckoutResponseData",
     "CurrentSubscriptionResponseData",
     "InvoiceDownloadResponseData",
     "InvoiceResponseData",
     "PlanResponseData",
+    "PortalResponseData",
     "UsageBarResponseData",
 )
 
@@ -67,6 +69,7 @@ class CurrentSubscriptionResponseData(ApiResponseModel):
     startedAt: str | None = Field(None, description="开始时间")
     currentPeriodEnd: str | None = Field(None, description="下次续费时间")
     canceledAt: str | None = Field(None, description="取消时间")
+    stripeEnabled: bool = Field(False, description="是否已启用 Stripe（前端据此决定走 Checkout/Portal 还是即时 mock）")
 
 
 class InvoiceResponseData(ApiResponseModel):
@@ -83,10 +86,27 @@ class InvoiceResponseData(ApiResponseModel):
 
 
 class InvoiceDownloadResponseData(ApiResponseModel):
-    """发票下载产物（base64 占位，真实实现为 PDF 下载链接）。"""
+    """发票下载产物：Stripe 发票返回托管 PDF 链接(url)，mock 发票返回 base64 文本占位。"""
 
     invoiceNo: str = Field(..., description="发票号")
     filename: str = Field(..., description="文件名")
     contentType: str = Field(..., description="内容类型")
-    contentBase64: str = Field(..., description="文件内容 base64 编码")
-    sizeBytes: int = Field(..., description="文件字节数")
+    contentBase64: str = Field("", description="文件内容 base64 编码（mock 占位；Stripe 路径为空）")
+    sizeBytes: int = Field(0, description="文件字节数")
+    url: str | None = Field(None, description="Stripe 托管发票 PDF 链接（存在则前端优先打开）")
+
+
+class CheckoutResponseData(ApiResponseModel):
+    """套餐变更结果：Stripe 已启用时返回 Checkout 跳转 URL；否则即时应用并返回当前订阅。"""
+
+    mode: str = Field(..., description="checkout=需跳转 Stripe 支付；applied=已即时应用(mock)")
+    checkoutUrl: str | None = Field(None, description="Stripe Checkout 跳转地址（mode=checkout）")
+    subscription: CurrentSubscriptionResponseData | None = Field(
+        None, description="即时应用后的当前订阅（mode=applied）"
+    )
+
+
+class PortalResponseData(ApiResponseModel):
+    """Stripe Customer Portal 跳转地址（管理订阅 / 支付方式 / 发票）。"""
+
+    portalUrl: str = Field(..., description="客户门户跳转地址")

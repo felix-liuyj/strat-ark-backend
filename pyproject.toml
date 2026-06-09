@@ -29,6 +29,8 @@ dependencies = [
     "aiosmtplib",
     # 阿里云 OSS
     "oss2",
+    # 支付（Stripe 订阅 Checkout + Customer Portal + Webhook）
+    "stripe",
 ]
 
 [tool.poetry]

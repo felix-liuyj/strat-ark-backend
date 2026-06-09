@@ -89,6 +89,18 @@ class Settings(BaseSettings):
     # 引擎运行时（freqtrade / tradingagents）经服务连接交互：地址存于各引擎的
     # connection_config.serviceUrl（引擎配置页 UI 管理），不走 env，无需 K8s 集群化配置。
 
+    # Stripe 支付（订阅 Checkout + Customer Portal + Webhook；官方 stripe SDK）
+    # 留空 STRIPE_SECRET_KEY 即回退现有 mock 计费流程，应用仍可运行。
+    # 价格 ID 来自 Stripe 控制台（每个套餐 × 计费周期一个 Price）；免费套餐无 Price。
+    STRIPE_SECRET_KEY: str | None = None
+    STRIPE_WEBHOOK_SECRET: str | None = None
+    STRIPE_PRICE_PRO_MONTHLY: str | None = None
+    STRIPE_PRICE_PRO_YEARLY: str | None = None
+    STRIPE_PRICE_TEAM_MONTHLY: str | None = None
+    STRIPE_PRICE_TEAM_YEARLY: str | None = None
+    # Checkout success/cancel 与 Portal 返回地址基址；留空则取首个 CORS origin。
+    FRONTEND_BASE_URL: str | None = None
+
     STATIC_DIR: str = "./statics"
     STATIC_URL: str = "/statics"
 
@@ -103,6 +115,21 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @computed_field
+    @property
+    def stripe_enabled(self) -> bool:
+        """是否已配置 Stripe（未配置则订阅走 mock 回退）。"""
+        return bool(self.STRIPE_SECRET_KEY)
+
+    @computed_field
+    @property
+    def frontend_base_url(self) -> str:
+        """前端基址（Checkout / Portal 返回地址用），默认取首个 CORS origin。"""
+        if self.FRONTEND_BASE_URL:
+            return self.FRONTEND_BASE_URL.rstrip("/")
+        origins = self.cors_origin_list
+        return origins[0].rstrip("/") if origins else "http://localhost:3000"
 
     @computed_field
     @property

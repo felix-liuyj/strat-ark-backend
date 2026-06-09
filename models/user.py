@@ -22,6 +22,8 @@ class User(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     avatar_url: Mapped[str | None] = mapped_column(String(1024), nullable=True, default=None)
+    # Stripe 客户 ID（首次发起订阅时创建并回填；未接 Stripe 时为空）。
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None, index=True)
 
     def set_password(self, password: str) -> None:
         self.hashed_password = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")

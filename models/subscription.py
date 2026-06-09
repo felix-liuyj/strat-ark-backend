@@ -109,6 +109,8 @@ class Subscription(Base, TimestampMixin):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     current_period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     canceled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Stripe 订阅 ID（接 Stripe 时由 Webhook 回填；mock 流程为空）。
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None, index=True)
 
 
 class UsageCounter(Base, TimestampMixin):
@@ -151,3 +153,5 @@ class Invoice(Base, TimestampMixin):
         String(20), nullable=False, default=InvoiceStatusEnum.PAID
     )
     issued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Stripe 托管发票 PDF / 详情链接（接 Stripe 时由 Webhook 回填；下载时优先返回此链接）。
+    external_url: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)

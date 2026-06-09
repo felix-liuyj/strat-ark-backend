@@ -1,21 +1,35 @@
-"""计费 / 发票服务 stub。
+"""计费 / 发票服务（Stripe 订阅 Checkout + Customer Portal + Webhook；config 驱动 + mock 回退）。
 
-返回拟真 mock 数据；函数签名按真实计费集成（Stripe / 支付服务 + 发票生成）预留。
-**绝不发起真实扣费、转账或支付**：套餐升级 / 降级 / 取消只在本地写订阅与发票记录，
-本模块仅负责"模拟下单结果"与"生成可下载发票文件"两类纯产物。
-真实实现时这里会调用支付服务创建订单 / 订阅，并由发票服务渲染 PDF。
+- 配置了 ``STRIPE_SECRET_KEY`` 时：经官方 stripe SDK 创建订阅 Checkout 会话 / 客户门户会话、
+  校验 Webhook 签名；订阅激活与发票以 Stripe Webhook 为准（异步流程，源真相在 Stripe）。
+- 未配置 Stripe 时：回退到本地 mock（``simulate_subscription_charge`` 即时成功 +
+  ``render_invoice_document`` 文本占位），应用仍可运行、演示流程不变。
+
+签名 / 密钥 / Webhook 验签只在后端；前端只拿后端返回的跳转 URL，不接触任何密钥。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
+
+import stripe
+
+from configs import get_settings
+from libs.logger import logger
 
 __all__ = (
     "InvoiceDocumentResult",
     "SubscriptionChargeResult",
+    "construct_webhook_event",
+    "create_billing_portal_session",
+    "create_checkout_session",
+    "ensure_customer",
+    "price_id_for",
     "render_invoice_document",
     "simulate_subscription_charge",
+    "stripe_enabled",
 )
 
 
@@ -100,3 +114,71 @@ def render_invoice_document(
         content=content,
         size_bytes=len(content),
     )
+
+
+# ============================ Stripe 集成（config 驱动，未配置不触达） ============================
+
+
+def stripe_enabled() -> bool:
+    """是否已配置 Stripe（未配置则订阅走 mock 回退）。"""
+    return bool(get_settings().STRIPE_SECRET_KEY)
+
+
+def _init_stripe() -> None:
+    """调用前设置 stripe SDK 密钥。"""
+    stripe.api_key = get_settings().STRIPE_SECRET_KEY
+
+
+def price_id_for(plan_code: str, billing_cycle: str) -> str | None:
+    """套餐 × 计费周期 → Stripe Price ID（取自 settings；免费套餐 / 未配置返回 None）。"""
+    return getattr(get_settings(), f"STRIPE_PRICE_{plan_code.upper()}_{billing_cycle.upper()}", None)
+
+
+def ensure_customer(*, customer_id: str | None, email: str, name: str, user_id: str) -> str:
+    """返回可用的 Stripe Customer ID：已有直接用，否则按用户创建（幂等键防重复）。"""
+    _init_stripe()
+    if customer_id:
+        return customer_id
+    customer = stripe.Customer.create(
+        email=email,
+        name=name or email,
+        metadata={"userId": user_id},
+        idempotency_key=f"customer-{user_id}",
+    )
+    return str(customer["id"])
+
+
+def create_checkout_session(
+    *,
+    customer_id: str,
+    price_id: str,
+    success_url: str,
+    cancel_url: str,
+    metadata: dict[str, str],
+) -> tuple[str, str]:
+    """创建订阅模式 Checkout 会话，返回 (session_id, checkout_url)。"""
+    _init_stripe()
+    session = stripe.checkout.Session.create(
+        mode="subscription",
+        customer=customer_id,
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata,
+        subscription_data={"metadata": metadata},
+        allow_promotion_codes=True,
+    )
+    return str(session["id"]), str(session["url"])
+
+
+def create_billing_portal_session(*, customer_id: str, return_url: str) -> str:
+    """创建 Customer Portal 会话（管理订阅 / 支付方式 / 发票），返回门户 URL。"""
+    _init_stripe()
+    session = stripe.billing_portal.Session.create(customer=customer_id, return_url=return_url)
+    return str(session["url"])
+
+
+def construct_webhook_event(payload: bytes, sig_header: str) -> Any:
+    """校验 Stripe-Signature 并构造 Webhook 事件（验签失败抛 stripe 异常，由调用方拦截）。"""
+    _init_stripe()
+    return stripe.Webhook.construct_event(payload, sig_header, get_settings().STRIPE_WEBHOOK_SECRET)

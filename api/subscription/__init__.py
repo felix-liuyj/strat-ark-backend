@@ -8,20 +8,25 @@ from libs.auth.permissions import PermissionChecker, get_permission_checker
 from libs.ctrl.db import get_db
 from libs.response import BaseResponseModel, create_response
 from responses.subscription import (
+    CheckoutResponseData,
     CurrentSubscriptionResponseData,
     InvoiceDownloadResponseData,
     InvoiceResponseData,
     PlanResponseData,
+    PortalResponseData,
     UsageBarResponseData,
 )
 from view_models.subscription import (
     CancelSubscriptionViewModel,
     ChangePlanViewModel,
+    CreateCheckoutViewModel,
+    CreatePortalViewModel,
     DownloadInvoiceViewModel,
     GetCurrentSubscriptionViewModel,
     ListInvoicesViewModel,
     ListPlansViewModel,
     ListUsageViewModel,
+    StripeWebhookViewModel,
 )
 
 __all__ = ("router",)
@@ -72,6 +77,37 @@ async def change_plan(
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
     return await create_response(ChangePlanViewModel, request, db, checker=checker, form=form)
+
+
+@router.post(
+    "/subscription/checkout",
+    response_model=BaseResponseModel[CheckoutResponseData],
+    summary="发起套餐变更（Stripe Checkout / mock）",
+    description="Stripe 已启用时创建订阅 Checkout 会话并返回跳转 URL（mode=checkout）；未启用时即时应用 mock 变更并返回当前订阅（mode=applied）。",
+    tags=["StratArk/订阅计费"],
+)
+async def create_checkout(
+    request: Request,
+    form: ChangePlanForm,
+    checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
+) -> BaseResponseModel:
+    return await create_response(CreateCheckoutViewModel, request, db, checker=checker, form=form)
+
+
+@router.post(
+    "/subscription/portal",
+    response_model=BaseResponseModel[PortalResponseData],
+    summary="打开 Stripe 客户门户",
+    description="创建 Stripe Customer Portal 会话并返回跳转 URL，用于管理订阅 / 支付方式 / 发票。需已启用 Stripe 且账户已有 Stripe 客户。",
+    tags=["StratArk/订阅计费"],
+)
+async def create_portal(
+    request: Request,
+    checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
+) -> BaseResponseModel:
+    return await create_response(CreatePortalViewModel, request, db, checker=checker)
 
 
 @router.post(
@@ -134,4 +170,23 @@ async def download_invoice(
 ) -> BaseResponseModel:
     return await create_response(
         DownloadInvoiceViewModel, request, db, invoice_id=invoice_id, checker=checker
+    )
+
+
+@router.post(
+    "/webhooks/stripe",
+    response_model=BaseResponseModel[dict],
+    summary="Stripe Webhook 回调",
+    description="接收 Stripe 事件（checkout.session.completed / customer.subscription.* / invoice.paid）。"
+    "公开端点，仅靠 Stripe-Signature 验签鉴别；在 Stripe 控制台注册指向本路径。",
+    tags=["StratArk/订阅计费"],
+)
+async def stripe_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> BaseResponseModel:
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+    return await create_response(
+        StripeWebhookViewModel, request, db, payload=payload, sig_header=sig_header
     )
