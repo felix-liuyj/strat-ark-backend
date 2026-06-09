@@ -25,10 +25,7 @@ class EngineResponseData(ApiResponseModel):
     id: int = Field(..., description="引擎 ID")
     engineKind: EngineKindEnum = Field(..., description="引擎类型")
     name: str = Field(..., description="引擎名称")
-    namespace: str = Field(..., description="K8s 命名空间")
-    deploymentName: str = Field(..., description="Deployment 名称")
     status: EngineStatusEnum = Field(..., description="运行状态")
-    replicasDesired: int = Field(..., description="期望副本数")
 
 
 class DependencyResponseData(ApiResponseModel):
@@ -68,11 +65,10 @@ class EngineConnectionResponseData(ApiResponseModel):
 
 
 class EngineDeploymentResponseData(ApiResponseModel):
-    """引擎部署配置。"""
+    """引擎运行设置（非 k8s：日志级别 / 并发 / 模型参数等）。"""
 
     engineKind: EngineKindEnum = Field(..., description="引擎类型")
-    replicasDesired: int = Field(..., description="期望副本数")
-    config: dict[str, Any] = Field(..., description="部署配置")
+    config: dict[str, Any] = Field(..., description="引擎运行设置")
 
 
 class EngineOpResponseData(ApiResponseModel):

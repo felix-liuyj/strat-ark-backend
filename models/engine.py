@@ -2,8 +2,8 @@
 
 - ``Engine`` 引擎注册表（Freqtrade 执行引擎 / TradingAgents 投研引擎），含连接配置与
   部署配置（JSON，敏感凭证掩码后回显）。
-- ``EngineOp`` 引擎运维操作流水（scale / restart / reload / drain / clear_queue /
-  redeploy / emergency_stop / tear_down），危险操作同时写平台审计日志。
+- ``EngineOp`` 引擎运维操作流水（restart / reload / drain / clear_queue /
+  emergency_stop / tear_down），危险操作同时写平台审计日志。
 """
 
 from enum import StrEnum
@@ -41,15 +41,13 @@ class EngineStatusEnum(StrEnum):
 
 
 class EngineOpTypeEnum(StrEnum):
-    """引擎运维操作类型（与前端高级操作 / 危险操作对齐）。"""
+    """引擎运维操作类型（经引擎暴露的控制 API；服务连接模型，无 k8s 副本 / 镜像概念）。"""
 
     TEST_CONNECTION = "test_connection"
-    SCALE = "scale"
     RESTART = "restart"
     RELOAD = "reload"
     DRAIN = "drain"
     CLEAR_QUEUE = "clear_queue"
-    REDEPLOY = "redeploy"
     EMERGENCY_STOP = "emergency_stop"
     TEAR_DOWN = "tear_down"
 
@@ -68,9 +66,10 @@ DANGEROUS_OP_TYPES: frozenset[EngineOpTypeEnum] = frozenset(
 class Engine(Base, TimestampMixin):
     """引擎注册表（管理员维护）。
 
-    ``connection_config`` / ``deployment_config`` 按引擎类型存不同字段（如 service URL、
-    REST token、镜像、副本、HPA、模型网关等）；敏感字段（token / apiKey / secret）入库前
-    由 ViewModel 掩码或仅保留必要部分，回显时不返回明文。
+    引擎不做 k8s 集群化，作为独立服务运行；backend 经 ``connection_config.serviceUrl``
+    暴露的 HTTP API 做服务连接交互。``connection_config`` 存服务连接（serviceUrl / token /
+    timeout / 网关等），``deployment_config`` 存引擎运行设置（日志级别 / 并发 / 模型参数等，
+    非 k8s 编排 spec）；敏感字段（token / apiKey / secret）入库前由 ViewModel 掩码，不回显明文。
     """
 
     __tablename__ = "engines"
@@ -78,10 +77,7 @@ class Engine(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     engine_kind: Mapped[EngineKindEnum] = mapped_column(String(20), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
-    namespace: Mapped[str] = mapped_column(String(120), nullable=False, default="stratark-prod")
-    deployment_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     status: Mapped[EngineStatusEnum] = mapped_column(String(20), nullable=False, default=EngineStatusEnum.RUNNING)
-    replicas_desired: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     connection_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     deployment_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
@@ -102,6 +98,6 @@ class EngineOp(Base, TimestampMixin):
     message: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     # 操作者（管理员）user id，便于回溯。
     operator_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    # 操作参数与结果明细（如 scale 的目标副本数、redeploy 的镜像标签）。
+    # 操作参数与结果明细（如操作下发时的附加上下文）。
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

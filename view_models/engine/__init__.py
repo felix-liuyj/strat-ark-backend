@@ -59,8 +59,6 @@ _MASK_VALUE = "***"
 _ENGINE_DEFAULTS: dict[EngineKindEnum, dict[str, Any]] = {
     EngineKindEnum.FREQTRADE: {
         "name": "Freqtrade 执行引擎",
-        "deployment_name": "freqtrade-orchestrator",
-        "replicas_desired": 3,
         "connection_config": {
             "serviceUrl": "http://freqtrade-orchestrator.stratark-prod.svc.cluster.local:8080",
             "healthPath": "/api/v1/ping",
@@ -70,23 +68,12 @@ _ENGINE_DEFAULTS: dict[EngineKindEnum, dict[str, Any]] = {
             "mtls": True,
         },
         "deployment_config": {
-            "image": "stratark/freqtrade-orchestrator:2026.4.2",
-            "replicas": 3,
-            "scheduler": 8,
-            "cpuLimit": "1",
-            "memLimit": "1.5Gi",
-            "dataVolume": "50Gi",
             "logLevel": "INFO",
-            "hpaEnabled": True,
-            "hpaMin": 3,
-            "hpaMax": 6,
-            "hpaTargetCpu": 70,
+            "scheduler": 8,
         },
     },
     EngineKindEnum.TRADINGAGENTS: {
         "name": "TradingAgents API 服务",
-        "deployment_name": "tradingagents-api",
-        "replicas_desired": 4,
         "connection_config": {
             "serviceUrl": "http://tradingagents-api.stratark-prod.svc.cluster.local:8100",
             "redisUrl": "redis://redis.stratark-prod.svc:6379/2",
@@ -98,18 +85,10 @@ _ENGINE_DEFAULTS: dict[EngineKindEnum, dict[str, Any]] = {
             "apiKey": "",
         },
         "deployment_config": {
-            "image": "stratark/tradingagents-api:2026.4.0",
-            "replicas": 4,
-            "concurrency": 8,
-            "cpuLimit": "1.5",
-            "memLimit": "3Gi",
             "logLevel": "INFO",
+            "concurrency": 8,
             "temperature": 0.3,
             "maxTokens": 4096,
-            "hpaEnabled": True,
-            "hpaMin": 2,
-            "hpaMax": 6,
-            "hpaTargetQueueDepth": 20,
         },
     },
 }
@@ -138,10 +117,7 @@ def _build_engine(engine: Engine) -> EngineResponseData:
         id=engine.id,
         engineKind=engine.engine_kind,
         name=engine.name,
-        namespace=engine.namespace,
-        deploymentName=engine.deployment_name,
         status=engine.status,
-        replicasDesired=engine.replicas_desired,
     )
 
 
@@ -179,10 +155,7 @@ class _AdminEngineViewModel(BaseViewModel):
         engine = Engine(
             engine_kind=engine_kind,
             name=str(defaults["name"]),
-            namespace="stratark-prod",
-            deployment_name=str(defaults["deployment_name"]),
             status=EngineStatusEnum.RUNNING,
-            replicas_desired=int(defaults["replicas_desired"]),  # type: ignore[arg-type]
             connection_config=dict(defaults["connection_config"]),  # type: ignore[arg-type]
             deployment_config=dict(defaults["deployment_config"]),  # type: ignore[arg-type]
         )
@@ -337,14 +310,13 @@ class GetEngineDeploymentViewModel(_AdminEngineViewModel):
         self.operating_successfully(
             EngineDeploymentResponseData(
                 engineKind=engine.engine_kind,
-                replicasDesired=engine.replicas_desired,
                 config=engine.deployment_config or {},
             )
         )
 
 
 class UpdateEngineDeploymentViewModel(_AdminEngineViewModel):
-    """写入部署配置（可同步期望副本到主记录）。"""
+    """写入引擎运行设置（日志级别 / 并发 / 模型参数等）。"""
 
     def __init__(
         self,
@@ -366,25 +338,18 @@ class UpdateEngineDeploymentViewModel(_AdminEngineViewModel):
             return
         engine = await self._get_or_seed_engine(self.engine_kind)
         engine.deployment_config = _merge_config(engine.deployment_config, self.form.config)
-        if self.form.replicasDesired is not None:
-            engine.replicas_desired = self.form.replicasDesired
         await self.db.commit()
         await self.db.refresh(engine)
         self.operating_successfully(
             EngineDeploymentResponseData(
                 engineKind=engine.engine_kind,
-                replicasDesired=engine.replicas_desired,
                 config=engine.deployment_config or {},
             )
         )
 
 
 # 运维操作类型 → 引擎服务连接调用（经引擎暴露的控制 API；test_connection 探 serviceUrl）。
-def _dispatch_op(
-    op_type: EngineOpTypeEnum, engine_key: str, service_url: str, form: EngineOpExecuteForm
-) -> engine_runtime.EngineOpResult:
-    if op_type == EngineOpTypeEnum.SCALE:
-        return engine_runtime.scale_engine(engine_key, form.replicas or 0)
+def _dispatch_op(op_type: EngineOpTypeEnum, engine_key: str, service_url: str) -> engine_runtime.EngineOpResult:
     if op_type == EngineOpTypeEnum.RESTART:
         return engine_runtime.trigger_restart(engine_key)
     if op_type == EngineOpTypeEnum.RELOAD:
@@ -393,8 +358,6 @@ def _dispatch_op(
         return engine_runtime.drain_engine(engine_key)
     if op_type == EngineOpTypeEnum.CLEAR_QUEUE:
         return engine_runtime.reload_engine(engine_key)
-    if op_type == EngineOpTypeEnum.REDEPLOY:
-        return engine_runtime.trigger_redeploy(engine_key, form.image)
     if op_type == EngineOpTypeEnum.EMERGENCY_STOP:
         return engine_runtime.emergency_stop_engine(engine_key)
     if op_type == EngineOpTypeEnum.TEAR_DOWN:
@@ -425,19 +388,11 @@ class ExecuteEngineOpViewModel(_AdminEngineViewModel):
             return
 
         op_type = self.form.opType
-        if op_type == EngineOpTypeEnum.SCALE and self.form.replicas is None:
-            self.illegal_parameters("扩缩容操作需要提供目标副本数")
-            return
-
         engine = await self._get_or_seed_engine(self.engine_kind)
         service_url = str((engine.connection_config or {}).get("serviceUrl", ""))
-        result = _dispatch_op(op_type, str(self.engine_kind), service_url, self.form)
+        result = _dispatch_op(op_type, str(self.engine_kind), service_url)
 
         detail: dict[str, Any] = {}
-        if self.form.replicas is not None:
-            detail["replicas"] = self.form.replicas
-        if self.form.image:
-            detail["image"] = self.form.image
 
         op_status = EngineOpStatusEnum.SUCCESS if result.ok else EngineOpStatusEnum.FAILED
         op = EngineOp(

@@ -35,10 +35,8 @@ __all__ = (
     "fetch_logs",
     "fetch_runtime_snapshot",
     "reload_engine",
-    "scale_engine",
     "tear_down_engine",
     "test_connection",
-    "trigger_redeploy",
     "trigger_restart",
 )
 
@@ -230,11 +228,6 @@ def test_connection(engine_key: str, service_url: str) -> EngineOpResult:
 # 保持预留 stub、不发起真实控制请求。注释保留真实实现路径供后续按需接入。
 
 
-def scale_engine(engine_key: str, replicas: int) -> EngineOpResult:
-    """调整并发 / 实例数（stub）。服务连接模型下由引擎自身或其编排器处理。"""
-    return _build_op_result(engine_key, "scale", "running", f"已提交调整 · 目标 {replicas}")
-
-
 def trigger_restart(engine_key: str) -> EngineOpResult:
     """重启引擎（stub）。真实实现：调用引擎暴露的重启控制端点。"""
     return _build_op_result(engine_key, "restart", "running", "已触发重启")
@@ -248,12 +241,6 @@ def reload_engine(engine_key: str) -> EngineOpResult:
 def drain_engine(engine_key: str) -> EngineOpResult:
     """排空在途任务（stub）。真实实现：调用引擎暂停 / 排空端点。"""
     return _build_op_result(engine_key, "drain", "running", "已开始排空")
-
-
-def trigger_redeploy(engine_key: str, image: str | None = None) -> EngineOpResult:
-    """重新部署（stub）。真实实现：由服务编排器按新版本重建后再连。"""
-    suffix = f" · {image}" if image else ""
-    return _build_op_result(engine_key, "redeploy", "running", f"已开始重建{suffix}")
 
 
 def emergency_stop_engine(engine_key: str) -> EngineOpResult:

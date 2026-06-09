@@ -21,15 +21,12 @@ class EngineConnectionUpdateForm(ApiFormModel):
 
 
 class EngineDeploymentUpdateForm(ApiFormModel):
-    """更新引擎部署配置。``config`` 含镜像 / 副本 / 资源 / HPA / 日志级别等。"""
+    """更新引擎运行设置。``config`` 含日志级别 / 并发 / 模型参数等（非 k8s 编排字段）。"""
 
-    config: dict[str, Any] = Body(..., embed=True, description="部署配置")
-    replicasDesired: int | None = Body(None, embed=True, description="期望副本数（同步到引擎主记录）")
+    config: dict[str, Any] = Body(..., embed=True, description="引擎运行设置")
 
 
 class EngineOpExecuteForm(ApiFormModel):
-    """执行一次引擎运维操作。"""
+    """执行一次引擎运维操作（经引擎暴露的控制 API）。"""
 
     opType: EngineOpTypeEnum = Body(..., embed=True, description="运维操作类型")
-    replicas: int | None = Body(None, embed=True, description="扩缩容目标副本数（scale 时必填）")
-    image: str | None = Body(None, embed=True, description="重建镜像标签（redeploy 可选）")
