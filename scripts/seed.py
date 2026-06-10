@@ -1,4 +1,4 @@
-"""数据库初始化 + 演示种子数据（幂等）。
+"""数据库初始化 + 内置策略种子（幂等）。
 
 用法（已激活 venv / poetry 环境）::
 
@@ -6,31 +6,19 @@
 
 执行内容：
 1. ``init_db()`` 建表（多 worker 安全，幂等）。
-2. 写入三角色演示账号（管理员 / 普通用户 / 订阅用户），与前端 mock 账号对齐。
-3. 写入平台内置策略（``user_id IS NULL`` + ``is_builtin=True``），供 Strategy Lab 列表。
+2. 写入平台内置策略（``user_id IS NULL`` + ``is_builtin=True``），供 Strategy Lab 列表。
 
-幂等：按邮箱 / 策略名判重，已存在则跳过；可重复运行。
+幂等：按策略名判重，已存在则跳过；可重复运行。
+账号一律走注册流程创建（管理员邮箱白名单自动判定角色），不再写演示账号。
 套餐目录、引擎默认配置等由对应 ViewModel 首次访问时惰性 seed，无需在此处理。
 """
 
 import asyncio
-import os
 
 from sqlalchemy import select
 
 from libs.ctrl.db.sqlalchemy import init_db, new_async_session
-from models.account import PlanEnum, UserTypeEnum
 from models.strategy import Strategy, StrategyRiskEnum, StrategyStatusEnum, StrategyTypeEnum
-from models.user import User
-
-# 演示账号密码：默认仅用于本地 / 演示环境，可经环境变量覆盖。
-DEMO_PASSWORD = os.environ.get("SEED_DEMO_PASSWORD", "strategy123")
-
-DEMO_USERS: list[dict] = [
-    {"email": "alex@stratark.io", "display_name": "Alex Chen", "user_type": UserTypeEnum.ADMIN, "plan": PlanEnum.PRO},
-    {"email": "wei@stratark.io", "display_name": "Wei Zhang", "user_type": UserTypeEnum.CLIENT, "plan": PlanEnum.FREE},
-    {"email": "lin@stratark.io", "display_name": "Lin Yu", "user_type": UserTypeEnum.CLIENT, "plan": PlanEnum.PRO},
-]
 
 BUILTIN_STRATEGIES: list[dict] = [
     {
@@ -104,26 +92,6 @@ BUILTIN_STRATEGIES: list[dict] = [
 ]
 
 
-async def seed_users(db) -> int:
-    created = 0
-    for spec in DEMO_USERS:
-        exists = await db.scalar(select(User).where(User.email == spec["email"]))
-        if exists is not None:
-            continue
-        user = User(
-            email=spec["email"],
-            display_name=spec["display_name"],
-            user_type=spec["user_type"],
-            plan=spec["plan"],
-            is_active=True,
-            is_verified=True,
-        )
-        user.set_password(DEMO_PASSWORD)
-        db.add(user)
-        created += 1
-    return created
-
-
 async def seed_strategies(db) -> int:
     created = 0
     for spec in BUILTIN_STRATEGIES:
@@ -140,10 +108,9 @@ async def seed_strategies(db) -> int:
 async def main() -> None:
     await init_db()
     async with new_async_session() as db:
-        users = await seed_users(db)
         strategies = await seed_strategies(db)
         await db.commit()
-    print(f"seed 完成：新增用户 {users} 个，内置策略 {strategies} 个（演示密码：{DEMO_PASSWORD}）")
+    print(f"seed 完成：新增内置策略 {strategies} 个")
 
 
 if __name__ == "__main__":
