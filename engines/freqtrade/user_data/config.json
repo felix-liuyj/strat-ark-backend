@@ -1,0 +1,154 @@
+{
+    // =====================================================================
+    // StratArk 策舟 · Freqtrade 执行引擎配置（生产最佳实现）
+    //
+    // 控制面：StratArk 后端通过 Freqtrade REST API（本文件 api_server 段，
+    //   监听 8080，仅暴露在编排内网）直接操控本引擎 —— 启停 / 重载 / 拉取
+    //   交易与持仓 / 读日志。引擎管理页经后端 PUT /engines/freqtrade/connection
+    //   写入 serviceUrl 与 restApiToken（= 下方 api_server 凭证派生的 JWT）。
+    // 安全：默认 dry_run + initial_state=stopped，未经后端显式 live-enable /
+    //   start 不会下任何真实订单。
+    // 敏感值：交易所与 api_server 凭证一律留空，由运行环境用 Freqtrade 原生
+    //   FREQTRADE__ 前缀环境变量注入（见同目录 README.md），不写入版本库。
+    // 本文件允许 // 注释与尾逗号（Freqtrade rapidjson PM_COMMENTS 解析）。
+    // =====================================================================
+
+    "bot_name": "stratark-freqtrade",
+
+    // ---- 资金与仓位 ----
+    "max_open_trades": 3,
+    "stake_currency": "USDT",
+    "stake_amount": "unlimited",      // 由 max_open_trades 均分可用余额；亦可设固定数值
+    "tradable_balance_ratio": 0.99,
+    "available_capital": 10000,
+    "amend_last_stake_amount": true,
+    "fiat_display_currency": "USD",
+    "timeframe": "5m",
+
+    // ---- 运行模式（核心安全开关）----
+    "dry_run": true,                  // 默认模拟盘；实盘由后端 live-enable 流程切换
+    "dry_run_wallet": 10000,
+    "initial_state": "stopped",       // 默认停机，由后端 REST /start 显式拉起
+    "cancel_open_orders_on_exit": true,
+    "trading_mode": "spot",           // 现货；合约改为 "futures" 并设 margin_mode
+    // "margin_mode": "isolated",     // trading_mode=futures 时启用
+
+    // ---- 下单与撮合 ----
+    "unfilledtimeout": {
+        "entry": 10,
+        "exit": 10,
+        "exit_timeout_count": 0,
+        "unit": "minutes"
+    },
+    "entry_pricing": {
+        "price_side": "same",
+        "use_order_book": true,
+        "order_book_top": 1,
+        "price_last_balance": 0.0,
+        "check_depth_of_market": {
+            "enabled": false,
+            "bids_to_ask_delta": 1
+        }
+    },
+    "exit_pricing": {
+        "price_side": "same",
+        "use_order_book": true,
+        "order_book_top": 1
+    },
+    "order_types": {
+        "entry": "limit",
+        "exit": "limit",
+        "emergency_exit": "market",
+        "force_entry": "market",
+        "force_exit": "market",
+        "stoploss": "market",
+        "stoploss_on_exchange": false,
+        "stoploss_on_exchange_interval": 60
+    },
+    "order_time_in_force": {
+        "entry": "GTC",
+        "exit": "GTC"
+    },
+
+    // ---- 交易所（密钥经 FREQTRADE__EXCHANGE__KEY / __SECRET 环境变量注入）----
+    "exchange": {
+        "name": "binance",
+        "key": "",
+        "secret": "",
+        "ccxt_config": {
+            "enableRateLimit": true
+        },
+        "ccxt_async_config": {
+            "enableRateLimit": true,
+            "rateLimit": 200
+        },
+        "pair_whitelist": [
+            "BTC/USDT",
+            "ETH/USDT",
+            "SOL/USDT"
+        ],
+        "pair_blacklist": [
+            "(BNB|BUSD|USDC|TUSD|DAI)/.*",
+            ".*(UP|DOWN|BULL|BEAR)/.*",
+            ".*(3L|3S|5L|5S)/.*"
+        ]
+    },
+
+    // ---- 交易对来源（静态白名单，演进可换 VolumePairList）----
+    "pairlists": [
+        {
+            "method": "StaticPairList"
+        }
+    ],
+
+    // ---- 通知：交由 StratArk 后端通知中心统一下发，Freqtrade 自身关闭 ----
+    "telegram": {
+        "enabled": false,
+        "token": "",
+        "chat_id": ""
+    },
+
+    // =====================================================================
+    // REST API 服务（StratArk 后端控制 Freqtrade 的入口）
+    // listen 0.0.0.0:8080 仅在编排内网可达；username / password / jwt_secret_key
+    // 经 FREQTRADE__API_SERVER__* 环境变量注入。后端用 username/password 调
+    // /api/v1/token/login 取 JWT，作为 restApiToken 调用其余端点。
+    // CORS_origins 放行编排内 orchestrator 来源。
+    // =====================================================================
+    "api_server": {
+        "enabled": true,
+        "listen_ip_address": "0.0.0.0",
+        "listen_port": 8080,
+        "verbosity": "error",
+        "enable_openapi": true,
+        "jwt_secret_key": "",
+        "ws_token": "",
+        "CORS_origins": [
+            "http://freqtrade-orchestrator.stratark-prod.svc.cluster.local:8080"
+        ],
+        "username": "",
+        "password": ""
+    },
+
+    // ---- 数据与运行内务 ----
+    "dataformat_ohlcv": "feather",
+    "dataformat_trades": "feather",
+    "process_throttle_secs": 5,
+    "internals": {
+        "process_throttle_secs": 5,
+        "heartbeat_interval": 60
+    },
+    "db_url": "sqlite:////freqtrade/user_data/tradesv3.sqlite",
+    "logfile": "/freqtrade/user_data/logs/freqtrade.log",
+    "user_data_dir": "/freqtrade/user_data",
+    "strategy_path": "/freqtrade/user_data/strategies",
+
+    // ---- 风控兜底（策略可在 .py 内覆盖；与平台风控规则双层约束）----
+    "stoploss": -0.06,
+    "minimal_roi": {
+        "0": 0.04,
+        "60": 0.02,
+        "120": 0.01,
+        "240": 0
+    }
+}

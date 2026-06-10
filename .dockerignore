@@ -16,5 +16,8 @@ __pycache__
 .ruff_cache
 .pytest_cache
 
-# 部署脚本（容器不需要）
+# 部署与编排资产（容器不需要；编排器 / 前端有各自的构建上下文）
 deploy/
+docs/
+engines/
+docker-compose*.yml
