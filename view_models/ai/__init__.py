@@ -109,11 +109,15 @@ class AnalyzeMarketViewModel(BaseViewModel):
             self.illegal_parameters("交易对不能为空")
             return
 
-        result = await trading_agents.run_market_analysis(
-            symbol=symbol,
-            timeframe=self.form.timeframe.strip() or "1h",
-            gateway=await _load_gateway(self.db),
-        )
+        try:
+            result = await trading_agents.run_market_analysis(
+                symbol=symbol,
+                timeframe=self.form.timeframe.strip() or "1h",
+                gateway=await _load_gateway(self.db),
+            )
+        except trading_agents.GatewayUnavailableError as exc:
+            self.operating_failed(str(exc))
+            return
         report = AgentReport(
             user_id=int(self.checker.user_id),
             report_type=AgentReportTypeEnum.MARKET_ANALYSIS,
@@ -164,13 +168,17 @@ class ReviewSignalViewModel(BaseViewModel):
             self.not_found("信号不存在")
             return
 
-        result = await trading_agents.review_signal(
-            symbol=signal.symbol,
-            direction=signal.direction,
-            confidence=signal.confidence,
-            risk_level=signal.risk_level,
-            gateway=await _load_gateway(self.db),
-        )
+        try:
+            result = await trading_agents.review_signal(
+                symbol=signal.symbol,
+                direction=signal.direction,
+                confidence=signal.confidence,
+                risk_level=signal.risk_level,
+                gateway=await _load_gateway(self.db),
+            )
+        except trading_agents.GatewayUnavailableError as exc:
+            self.operating_failed(str(exc))
+            return
         report = AgentReport(
             user_id=int(self.checker.user_id),
             report_type=AgentReportTypeEnum.SIGNAL_REVIEW,
@@ -218,14 +226,18 @@ class ReviewBacktestReportViewModel(BaseViewModel):
             self.illegal_parameters("回测尚未完成，无法复盘")
             return
 
-        result = await trading_agents.review_backtest(
-            strategy_name=task.strategy_name,
-            symbol=task.symbol,
-            total_return=task.total_return,
-            max_drawdown=task.max_drawdown or 0.0,
-            sharpe=task.sharpe or 0.0,
-            gateway=await _load_gateway(self.db),
-        )
+        try:
+            result = await trading_agents.review_backtest(
+                strategy_name=task.strategy_name,
+                symbol=task.symbol,
+                total_return=task.total_return,
+                max_drawdown=task.max_drawdown or 0.0,
+                sharpe=task.sharpe or 0.0,
+                gateway=await _load_gateway(self.db),
+            )
+        except trading_agents.GatewayUnavailableError as exc:
+            self.operating_failed(str(exc))
+            return
         report = AgentReport(
             user_id=int(self.checker.user_id),
             report_type=AgentReportTypeEnum.BACKTEST_REVIEW,

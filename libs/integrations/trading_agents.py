@@ -1,14 +1,14 @@
 """TradingAgents 多智能体投研集成。
 
 编排八类 Agent（Market / Technical / Sentiment / Bull / Bear / Trader / Risk /
-Portfolio）的研报产出：配置了 LLM 网关时，经 httpx 调用网关（provider-neutral：
-Anthropic Messages / OpenAI 兼容）产出结构化研报；未配置或任一步失败时，回退到
-确定性拟真研报（同输入同输出，保证离线 / 联调可复现）。数值价位（入场 / 止损 /
-止盈）始终由确定性骨架提供，LLM 仅丰富叙事与多空研判。
+Portfolio）的研报产出：经 httpx 调用 LLM 网关（provider-neutral：Anthropic Messages /
+OpenAI 兼容）产出结构化研报。**无回退机制**：网关未配置或调用失败抛
+``GatewayUnavailableError``，由 ViewModel 转为业务错误（禁止访问对应服务，不伪造研报）。
+数值价位（入场 / 止损 / 止盈）由确定性骨架计算（LLM 不产出可执行价格，仅叙事与多空研判）。
 
 网关配置单一事实源（resolve_gateway_config）：管理员在引擎管理页配置的 tradingagents
 connection_config（gatewayProvider / gatewayEndpoint / gatewayModel / apiKey，落库），
-不走 env；调用方（ViewModel）读库后传入，未配置 apiKey 即回退确定性研报。
+不走 env；调用方（ViewModel）读库后传入。
 
 约定：AI 只产出**辅助决策**结论，绝不直接下单；是否进入实盘由信号状态机 + 风控
 规则约束（见 view_models/signals）。
@@ -32,6 +32,7 @@ __all__ = (
     "AgentRoleEnum",
     "BacktestReviewResult",
     "GatewayConfig",
+    "GatewayUnavailableError",
     "MarketAnalysisResult",
     "SignalReviewResult",
     "resolve_gateway_config",
@@ -39,6 +40,10 @@ __all__ = (
     "review_signal",
     "run_market_analysis",
 )
+
+
+class GatewayUnavailableError(RuntimeError):
+    """LLM 网关不可用（未配置或调用失败）；message 直接面向用户展示。"""
 
 
 @dataclass(slots=True)
@@ -60,7 +65,7 @@ def resolve_gateway_config(connection_config: dict[str, Any] | None = None) -> G
 
     connection_config 字段（引擎管理页 TradingAgents 连接配置表单）：
     ``gatewayProvider``（Anthropic / OpenAI / Local，大小写不敏感）、``gatewayEndpoint``、
-    ``gatewayModel``、``apiKey``。apiKey 未配置即 ``ready=False``，调用方回退确定性研报；
+    ``gatewayModel``、``apiKey``。apiKey 未配置即 ``ready=False``，业务函数将拒绝服务；
     端点留空用 provider 官方默认，模型留空用 claude-opus-4-8。
     """
     cc = connection_config or {}
@@ -229,7 +234,7 @@ def _build_market_agents(symbol: str, bull_score: int) -> list[AgentOpinion]:
 
 
 def _demo_market_analysis(symbol: str, timeframe: str) -> MarketAnalysisResult:
-    """确定性市场分析（回退 / 数值骨架）。
+    """确定性数值骨架（入场 / 止损 / 止盈等价位计算，LLM 不产出可执行价格）。
 
     用确定性种子派生信心 / 多空分值与价位，保证同 symbol+timeframe 稳定可回放；
     LLM 网关可用时其叙事字段会被真实研报覆盖，数值价位仍沿用此处骨架。
@@ -267,7 +272,7 @@ def _demo_market_analysis(symbol: str, timeframe: str) -> MarketAnalysisResult:
 
 
 def _demo_review_signal(symbol: str, direction: str, confidence: float, risk_level: str) -> SignalReviewResult:
-    """确定性信号复核（回退）。
+    """确定性复核骨架（供 LLM 结果覆盖叙事字段）。
 
     依据传入信号自身的方向与置信度给出确定性建议；LLM 网关可用时叙事字段被覆盖。
     """
@@ -315,7 +320,7 @@ def _demo_review_backtest(
     max_drawdown: float,
     sharpe: float,
 ) -> BacktestReviewResult:
-    """确定性回测复盘归因（回退）。
+    """确定性复盘骨架（供 LLM 结果覆盖叙事字段）。
 
     依据传入的总收益 / 回撤 / 夏普给出确定性归因与建议；LLM 网关可用时叙事字段被覆盖。
     """
@@ -357,7 +362,7 @@ def _demo_review_backtest(
     )
 
 
-# ============================ LLM 网关（provider-neutral，失败回退 demo） ============================
+# ============================ LLM 网关（provider-neutral，失败抛 GatewayUnavailableError） ============================
 
 _HTTP_TIMEOUT = 60.0
 _MAX_TOKENS = 4096
@@ -369,6 +374,9 @@ _SYSTEM_PROMPT = (
 _MARKET_STATES = {"trend_up", "range", "trend_down"}
 _MARKET_SIGNALS = {"long", "watch", "avoid"}
 _RISK_LEVELS = {"low", "medium", "high"}
+
+_GATEWAY_NOT_CONFIGURED = "AI 网关未配置，请管理员在引擎管理页完成 TradingAgents 网关配置"
+_GATEWAY_CALL_FAILED = "AI 网关调用失败，请稍后重试或检查网关配置"
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
@@ -384,7 +392,7 @@ def _extract_json(text: str) -> dict[str, Any] | None:
 
 
 async def _llm_json(user_prompt: str, gateway: GatewayConfig) -> dict[str, Any] | None:
-    """调用 LLM 网关产出结构化 JSON；未配置或任一步失败返回 None（调用方回退）。"""
+    """调用 LLM 网关产出结构化 JSON；任一步失败返回 None（调用方转为 GatewayUnavailableError）。"""
     if not gateway.ready:
         return None
     api_key = gateway.api_key
@@ -474,14 +482,11 @@ def _coerce_agents(raw: Any, fallback: list[AgentOpinion]) -> list[AgentOpinion]
     return out or fallback
 
 
-async def run_market_analysis(
-    symbol: str, timeframe: str, *, gateway: GatewayConfig | None = None
-) -> MarketAnalysisResult:
-    """多智能体市场分析：LLM 网关可用时产出真实研报，否则回退确定性研报。"""
-    cfg = gateway or resolve_gateway_config()
-    base = _demo_market_analysis(symbol, timeframe)
-    if not cfg.ready:
-        return base
+async def run_market_analysis(symbol: str, timeframe: str, *, gateway: GatewayConfig) -> MarketAnalysisResult:
+    """多智能体市场分析。网关未配置 / 调用失败抛 GatewayUnavailableError，无回退。"""
+    if not gateway.ready:
+        raise GatewayUnavailableError(_GATEWAY_NOT_CONFIGURED)
+    base = _demo_market_analysis(symbol, timeframe)  # 数值价位骨架，LLM 不产出可执行价格
     prompt = (
         f"对交易对 {symbol}（周期 {timeframe}）做多智能体市场研判。"
         f"参考数值骨架：入场区间 {base.entry_zone}，止损 {base.stop_loss}，止盈 {base.take_profit}。"
@@ -491,9 +496,9 @@ async def run_market_analysis(
         '"agents":[{"role":"market|technical|sentiment|bull|bear|trader|risk|portfolio",'
         '"stance":"短语","summary":"中文","points":["要点"]}]}，agents 需覆盖全部八类角色。'
     )
-    data = await _llm_json(prompt, cfg)
+    data = await _llm_json(prompt, gateway)
     if data is None:
-        return base
+        raise GatewayUnavailableError(_GATEWAY_CALL_FAILED)
     bull = _as_int(data.get("bullScore"), base.bull_score, 0, 100)
     state = str(data.get("marketState", "")).strip().lower()
     signal = str(data.get("signal", "")).strip().lower()
@@ -508,13 +513,12 @@ async def run_market_analysis(
 
 
 async def review_signal(
-    symbol: str, direction: str, confidence: float, risk_level: str, *, gateway: GatewayConfig | None = None
+    symbol: str, direction: str, confidence: float, risk_level: str, *, gateway: GatewayConfig
 ) -> SignalReviewResult:
-    """信号复核：LLM 网关可用时产出真实复核，否则回退确定性结论。"""
-    cfg = gateway or resolve_gateway_config()
+    """信号复核。网关未配置 / 调用失败抛 GatewayUnavailableError，无回退。"""
+    if not gateway.ready:
+        raise GatewayUnavailableError(_GATEWAY_NOT_CONFIGURED)
     base = _demo_review_signal(symbol, direction, confidence, risk_level)
-    if not cfg.ready:
-        return base
     prompt = (
         f"对 {symbol} 的 {direction} 信号（置信度 {confidence}，风险 {risk_level}）做多智能体复核。"
         '输出 JSON：{"recommendation":"approve|review","confidence":0~1,'
@@ -522,9 +526,9 @@ async def review_signal(
         'sentiment|bull|bear|trader|risk|portfolio","stance":"短语","summary":"中文","points":["要点"]}]}。'
         "复核通过不等于自动下单。"
     )
-    data = await _llm_json(prompt, cfg)
+    data = await _llm_json(prompt, gateway)
     if data is None:
-        return base
+        raise GatewayUnavailableError(_GATEWAY_CALL_FAILED)
     rec = str(data.get("recommendation", "")).strip().lower()
     risk = str(data.get("riskLevel", "")).strip().lower()
     base.recommendation = rec if rec in {"approve", "review"} else base.recommendation
@@ -542,13 +546,12 @@ async def review_backtest(
     max_drawdown: float,
     sharpe: float,
     *,
-    gateway: GatewayConfig | None = None,
+    gateway: GatewayConfig,
 ) -> BacktestReviewResult:
-    """回测复盘：LLM 网关可用时产出真实归因，否则回退确定性结论。"""
-    cfg = gateway or resolve_gateway_config()
+    """回测复盘。网关未配置 / 调用失败抛 GatewayUnavailableError，无回退。"""
+    if not gateway.ready:
+        raise GatewayUnavailableError(_GATEWAY_NOT_CONFIGURED)
     base = _demo_review_backtest(strategy_name, symbol, total_return, max_drawdown, sharpe)
-    if not cfg.ready:
-        return base
     prompt = (
         f"对策略「{strategy_name}」在 {symbol} 的回测做归因复盘："
         f"总收益 {total_return}%，最大回撤 {max_drawdown}%，夏普 {sharpe}。"
@@ -556,9 +559,9 @@ async def review_backtest(
         '"suggestion":"中文改进建议","summary":"中文","agents":[{"role":"market|technical|'
         'sentiment|bull|bear|trader|risk|portfolio","stance":"短语","summary":"中文","points":["要点"]}]}。'
     )
-    data = await _llm_json(prompt, cfg)
+    data = await _llm_json(prompt, gateway)
     if data is None:
-        return base
+        raise GatewayUnavailableError(_GATEWAY_CALL_FAILED)
     base.verdict = str(data.get("verdict", "")).strip() or base.verdict
     base.strength = str(data.get("strength", "")).strip() or base.strength
     base.weakness = str(data.get("weakness", "")).strip() or base.weakness

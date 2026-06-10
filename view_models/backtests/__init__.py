@@ -281,14 +281,18 @@ class ReviewBacktestViewModel(BaseViewModel):
         gateway = trading_agents.resolve_gateway_config(
             await get_engine_connection_config(self.db, EngineKindEnum.TRADINGAGENTS)
         )
-        review = await trading_agents.review_backtest(
-            strategy_name=task.strategy_name,
-            symbol=task.symbol,
-            total_return=task.total_return,
-            max_drawdown=task.max_drawdown or 0.0,
-            sharpe=task.sharpe or 0.0,
-            gateway=gateway,
-        )
+        try:
+            review = await trading_agents.review_backtest(
+                strategy_name=task.strategy_name,
+                symbol=task.symbol,
+                total_return=task.total_return,
+                max_drawdown=task.max_drawdown or 0.0,
+                sharpe=task.sharpe or 0.0,
+                gateway=gateway,
+            )
+        except trading_agents.GatewayUnavailableError as exc:
+            self.operating_failed(str(exc))
+            return
         task.ai_review = {
             "verdict": review.verdict,
             "strength": review.strength,
