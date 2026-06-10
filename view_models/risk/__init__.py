@@ -46,7 +46,7 @@ _DEFAULT_RULES: list[_DefaultRule] = [
     (RiskRuleScopeEnum.ACCOUNT, RiskRuleTypeEnum.MAX_DRAWDOWN, "risk.ruleMaxDrawdown", 6.2, 10.0, "%"),
     (RiskRuleScopeEnum.SYMBOL, RiskRuleTypeEnum.MAX_POSITION_SIZE, "risk.ruleMaxPosition", 4.1, 5.0, "%"),
     (RiskRuleScopeEnum.ORDER, RiskRuleTypeEnum.MAX_LEVERAGE, "risk.ruleMaxLeverage", 1.0, 3.0, "x"),
-    (RiskRuleScopeEnum.STRATEGY, RiskRuleTypeEnum.COOLDOWN, "risk.ruleCooldown", 1.0, 3.0, "次"),
+    (RiskRuleScopeEnum.STRATEGY, RiskRuleTypeEnum.COOLDOWN, "risk.ruleCooldown", 1.0, 3.0, ""),
     (RiskRuleScopeEnum.SIGNAL, RiskRuleTypeEnum.NEWS_FILTER, "risk.ruleNews", None, None, ""),
     (RiskRuleScopeEnum.SIGNAL, RiskRuleTypeEnum.VOLATILITY_FILTER, "risk.ruleVolatility", None, None, ""),
     (RiskRuleScopeEnum.SYMBOL, RiskRuleTypeEnum.LIQUIDITY_FILTER, "risk.ruleLiquidity", None, None, ""),
@@ -391,39 +391,40 @@ class UpdateRiskRulesBulkViewModel(BaseViewModel):
     def _build_rules(self, user_id: int) -> list[RiskRule]:
         form = self.form
         # 列：(scope, rule_type, label, limit_value, unit, enabled)。
+        # label 统一存 i18n key（与 _DEFAULT_RULES 同源），由前端按语言渲染。
         rows: list[tuple[RiskRuleScopeEnum, RiskRuleTypeEnum, str, float | None, str, bool]] = [
             (
                 RiskRuleScopeEnum.ACCOUNT,
                 RiskRuleTypeEnum.DAILY_LOSS_LIMIT,
-                "Daily Loss Limit",
+                "risk.ruleDailyLoss",
                 form.dailyLossLimit,
                 "%",
                 True,
             ),
-            (RiskRuleScopeEnum.ACCOUNT, RiskRuleTypeEnum.MAX_DRAWDOWN, "Max Drawdown", form.maxDrawdown, "%", True),
+            (RiskRuleScopeEnum.ACCOUNT, RiskRuleTypeEnum.MAX_DRAWDOWN, "risk.ruleMaxDrawdown", form.maxDrawdown, "%", True),
             (
                 RiskRuleScopeEnum.SYMBOL,
                 RiskRuleTypeEnum.MAX_POSITION_SIZE,
-                "Max Position Size",
+                "risk.ruleMaxPosition",
                 form.maxPositionSize,
                 "%",
                 True,
             ),
-            (RiskRuleScopeEnum.ORDER, RiskRuleTypeEnum.MAX_LEVERAGE, "Max Leverage", form.maxLeverage, "x", True),
+            (RiskRuleScopeEnum.ORDER, RiskRuleTypeEnum.MAX_LEVERAGE, "risk.ruleMaxLeverage", form.maxLeverage, "x", True),
             (
                 RiskRuleScopeEnum.STRATEGY,
                 RiskRuleTypeEnum.COOLDOWN,
-                "Cooldown (连亏)",
+                "risk.ruleCooldown",
                 float(form.cooldownCount),
-                "次",
+                "",
                 True,
             ),
-            (RiskRuleScopeEnum.STRATEGY, RiskRuleTypeEnum.COOLDOWN, "冷却时长", form.cooldownHours, "h", True),
-            (RiskRuleScopeEnum.SIGNAL, RiskRuleTypeEnum.NEWS_FILTER, "News Risk Filter", None, "", form.newsFilter),
+            (RiskRuleScopeEnum.STRATEGY, RiskRuleTypeEnum.COOLDOWN, "risk.ruleCooldownHours", form.cooldownHours, "h", True),
+            (RiskRuleScopeEnum.SIGNAL, RiskRuleTypeEnum.NEWS_FILTER, "risk.ruleNews", None, "", form.newsFilter),
             (
                 RiskRuleScopeEnum.SYMBOL,
                 RiskRuleTypeEnum.VOLATILITY_FILTER,
-                "Volatility Filter",
+                "risk.ruleVolatility",
                 None,
                 "",
                 form.volatilityFilter,
@@ -431,7 +432,7 @@ class UpdateRiskRulesBulkViewModel(BaseViewModel):
             (
                 RiskRuleScopeEnum.SYMBOL,
                 RiskRuleTypeEnum.LIQUIDITY_FILTER,
-                "Liquidity Filter",
+                "risk.ruleLiquidity",
                 None,
                 "",
                 form.liquidityFilter,
