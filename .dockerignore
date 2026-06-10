@@ -1,0 +1,20 @@
+# 敏感配置绝不进镜像层（运行时经 compose environment / EnvironmentFile 注入）
+.env
+.env.*
+!.env.example
+
+# 版本控制与本地环境
+.git
+.gitignore
+.venv
+venv
+
+# Python 产物
+__pycache__
+*.pyc
+*.pyo
+.ruff_cache
+.pytest_cache
+
+# 部署脚本（容器不需要）
+deploy/
