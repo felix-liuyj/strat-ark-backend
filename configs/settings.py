@@ -73,13 +73,8 @@ class Settings(BaseSettings):
     MARKET_DATA_WS_URL: str | None = None
     MARKET_DATA_API_KEY: str | None = None
 
-    # AI 投研 LLM 网关（TradingAgents 多智能体研报；provider-neutral）
-    # 留空即回退确定性拟真研报、不发起任何 LLM 请求；AI 仅产出辅助决策，绝不直接下单。
-    # provider: anthropic（Messages API）| openai（OpenAI 兼容 chat/completions 网关）。
-    AI_GATEWAY_PROVIDER: str = "anthropic"
-    AI_GATEWAY_URL: str | None = None
-    AI_GATEWAY_API_KEY: str | None = None
-    AI_GATEWAY_MODEL: str = "claude-opus-4-8"
+    # AI 投研 LLM 网关不走 env：由管理员在引擎管理页配置（tradingagents connection_config，
+    # 落库为单一事实源，见 libs/integrations/trading_agents.resolve_gateway_config）。
 
     # 交易所私有 REST（账户信息查询：余额 / 权限，非下单）
     # 默认 Binance 现货 REST；GET /api/v3/account 需 HMAC-SHA256 签名 + X-MBX-APIKEY 头。

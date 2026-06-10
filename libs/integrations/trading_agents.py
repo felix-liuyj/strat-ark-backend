@@ -6,9 +6,9 @@ Anthropic Messages / OpenAI 兼容）产出结构化研报；未配置或任一�
 确定性拟真研报（同输入同输出，保证离线 / 联调可复现）。数值价位（入场 / 止损 /
 止盈）始终由确定性骨架提供，LLM 仅丰富叙事与多空研判。
 
-网关配置来源（resolve_gateway_config）：管理员在引擎管理页配置的 tradingagents
-connection_config（gatewayProvider / gatewayEndpoint / gatewayModel / apiKey，落库）
-**优先**，env ``AI_GATEWAY_*`` 仅作部署级回退；调用方（ViewModel）读库后传入。
+网关配置单一事实源（resolve_gateway_config）：管理员在引擎管理页配置的 tradingagents
+connection_config（gatewayProvider / gatewayEndpoint / gatewayModel / apiKey，落库），
+不走 env；调用方（ViewModel）读库后传入，未配置 apiKey 即回退确定性研报。
 
 约定：AI 只产出**辅助决策**结论，绝不直接下单；是否进入实盘由信号状态机 + 风控
 规则约束（见 view_models/signals）。
@@ -25,7 +25,6 @@ from typing import Any
 
 import httpx
 
-from configs import get_settings
 from libs.logger import logger
 
 __all__ = (
@@ -57,22 +56,22 @@ class GatewayConfig:
 
 
 def resolve_gateway_config(connection_config: dict[str, Any] | None = None) -> GatewayConfig:
-    """合成网关配置：引擎管理页落库的 connection_config 优先，env ``AI_GATEWAY_*`` 回退。
+    """从引擎管理页落库的 connection_config 合成网关配置（单一事实源，不走 env）。
 
     connection_config 字段（引擎管理页 TradingAgents 连接配置表单）：
     ``gatewayProvider``（Anthropic / OpenAI / Local，大小写不敏感）、``gatewayEndpoint``、
-    ``gatewayModel``、``apiKey``。逐字段取值：UI 留空的字段回退到对应 env。
+    ``gatewayModel``、``apiKey``。apiKey 未配置即 ``ready=False``，调用方回退确定性研报；
+    端点留空用 provider 官方默认，模型留空用 claude-opus-4-8。
     """
-    settings = get_settings()
     cc = connection_config or {}
-    provider = str(cc.get("gatewayProvider") or settings.AI_GATEWAY_PROVIDER or "anthropic").strip().lower()
+    provider = str(cc.get("gatewayProvider") or "anthropic").strip().lower()
     if provider == "local":
         provider = "openai"  # Local 网关按 OpenAI 兼容协议调用
     return GatewayConfig(
         provider=provider,
-        url=str(cc.get("gatewayEndpoint") or "").strip() or settings.AI_GATEWAY_URL,
-        model=str(cc.get("gatewayModel") or "").strip() or settings.AI_GATEWAY_MODEL,
-        api_key=str(cc.get("apiKey") or "").strip() or settings.AI_GATEWAY_API_KEY,
+        url=str(cc.get("gatewayEndpoint") or "").strip() or None,
+        model=str(cc.get("gatewayModel") or "").strip() or "claude-opus-4-8",
+        api_key=str(cc.get("apiKey") or "").strip() or None,
     )
 
 
