@@ -1,10 +1,9 @@
-"""订阅域 ViewModel：套餐目录 / 当前订阅 / 切换 / 取消 / 用量 / 账单 / 发票下载。
+"""订阅域 ViewModel：套餐目录 / 当前订阅 / 用量 / 账单 / Stripe Checkout / 客户门户 / Webhook / 后台套餐管理。
 
-切换与取消仅更新本地 ``Subscription`` 记录与 ``users.plan``，并写审计；
-绝不接入真实支付（扣费由 ``libs.integrations.billing`` service stub 模拟）。
+升级走 Stripe 订阅 Checkout，取消 / 管理走 Customer Portal，订阅激活与发票以 Stripe Webhook 为准；
+后台可编辑套餐元数据（落库 plans 表）并「同步到 Stripe」（创建 Product + Price 并回填价格 ID）。无 mock 计费。
 """
 
-import base64
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -13,13 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from configs import get_settings
-from forms.subscription import ChangePlanForm
+from forms.subscription import ChangePlanForm, PlanUpdateForm
 from libs.auth.permissions import PermissionChecker
 from libs.integrations import billing
-from libs.integrations.billing import render_invoice_document, simulate_subscription_charge
 from libs.logger import logger
 from libs.sso import AUTH_INVALID_MESSAGE
-from models.account import PlanEnum
+from models.account import PlanEnum, UserTypeEnum
 from models.audit_log import ActorTypeEnum, AuditActionEnum, AuditCategoryEnum
 from models.subscription import (
     BillingCycleEnum,
@@ -55,6 +53,8 @@ __all__ = (
     "ListPlansViewModel",
     "ListUsageViewModel",
     "StripeWebhookViewModel",
+    "SyncPlanToStripeViewModel",
+    "UpdatePlanViewModel",
 )
 
 # 套餐顺序：用于判定升级 / 降级方向（与前端 PLAN_ORDER 对齐）。
@@ -171,6 +171,7 @@ def _metric_limit(plan: Plan, metric: UsageMetricEnum) -> int:
 
 
 def _build_plan_response(plan: Plan) -> PlanResponseData:
+    # 注意：Stripe 产品 / 价格 ID 属于内部对接信息，不随响应外泄（/plans 公开可读）。
     return PlanResponseData(
         id=plan.code,
         name=plan.name,
@@ -185,6 +186,22 @@ def _build_plan_response(plan: Plan) -> PlanResponseData:
             aiAnalysis=plan.limit_ai_analysis,
             backtests=plan.limit_backtests,
         ),
+    )
+
+
+def _build_current_subscription(
+    plan_code: PlanEnum, sub: Subscription | None, *, fallback_unit_price: float = 0.0
+) -> CurrentSubscriptionResponseData:
+    """从 users.plan + 最新 active 订阅记录构造当前订阅概况（含 stripeEnabled 开关）。"""
+    return CurrentSubscriptionResponseData(
+        planCode=plan_code,
+        status=sub.status if sub else SubscriptionStatusEnum.ACTIVE,
+        billingCycle=sub.billing_cycle if sub else BillingCycleEnum.MONTHLY,
+        unitPrice=float(sub.unit_price) if sub else fallback_unit_price,
+        startedAt=_iso_or_none(sub.started_at) if sub else None,
+        currentPeriodEnd=_iso_or_none(sub.current_period_end) if sub else None,
+        canceledAt=_iso_or_none(sub.canceled_at) if sub else None,
+        stripeEnabled=billing.stripe_enabled(),
     )
 
 
@@ -308,208 +325,8 @@ class GetCurrentSubscriptionViewModel(BaseViewModel):
         plan = await _get_plan(self.db, user.plan)
         unit_price = float(plan.price_monthly) if plan else 0.0
         self.operating_successfully(
-            CurrentSubscriptionResponseData(
-                planCode=user.plan,
-                status=sub.status if sub else SubscriptionStatusEnum.ACTIVE,
-                billingCycle=sub.billing_cycle if sub else BillingCycleEnum.MONTHLY,
-                unitPrice=float(sub.unit_price) if sub else unit_price,
-                startedAt=_iso_or_none(sub.started_at) if sub else None,
-                currentPeriodEnd=_iso_or_none(sub.current_period_end) if sub else None,
-                canceledAt=_iso_or_none(sub.canceled_at) if sub else None,
-                stripeEnabled=billing.stripe_enabled(),
-            )
+            _build_current_subscription(user.plan, sub, fallback_unit_price=unit_price)
         )
-
-
-class ChangePlanViewModel(BaseViewModel):
-    """切换套餐（升级 / 降级）。
-
-    target=free 视为取消（引导走取消端点）；付费目标套餐：把旧 active 订阅置为
-    canceled，写新 active 订阅，更新 users.plan，生成已支付发票（模拟，无真实扣费），写审计。
-    """
-
-    audit_action = AuditActionEnum.SUBSCRIBE
-    audit_resource = "subscription"
-    audit_enabled = True
-
-    def __init__(
-        self,
-        request: Request,
-        db: AsyncSession,
-        form: ChangePlanForm,
-        checker: PermissionChecker,
-    ) -> None:
-        super().__init__(request=request)
-        self.form = form
-        self.checker = checker
-        self.db = db
-
-    async def before(self) -> None:
-        await super().before()
-        self.checker.require_auth()
-
-        target = self.form.targetPlan
-        user = await self.db.get(User, int(self.checker.user_id))
-        if user is None:
-            self.unauthorized(AUTH_INVALID_MESSAGE)
-            return
-
-        if target == PlanEnum.FREE:
-            self.illegal_parameters("降级为免费版请调用取消订阅接口")
-            return
-
-        if target == user.plan:
-            self.nothing_changed()
-            return
-
-        plan = await _get_plan(self.db, target)
-        if plan is None:
-            self.not_found("目标套餐不存在")
-            return
-
-        old_plan = user.plan
-        cycle = self.form.billingCycle
-        unit_price = (
-            float(plan.price_yearly_per_month)
-            if cycle == BillingCycleEnum.YEARLY
-            else float(plan.price_monthly)
-        )
-
-        charge = simulate_subscription_charge(
-            target.value, unit_price, "USD", billing_cycle=cycle.value
-        )
-
-        now = datetime.now(UTC)
-        await self._cancel_active_subscriptions(user.id, now)
-
-        period_days = 365 if cycle == BillingCycleEnum.YEARLY else 30
-        subscription = Subscription(
-            user_id=user.id,
-            plan_code=target,
-            billing_cycle=cycle,
-            status=SubscriptionStatusEnum.ACTIVE,
-            unit_price=unit_price,
-            started_at=now,
-            current_period_end=now + timedelta(days=period_days),
-        )
-        self.db.add(subscription)
-        await self.db.flush()
-
-        invoice = self._build_invoice(user.id, subscription.id, plan, unit_price)
-        self.db.add(invoice)
-
-        user.plan = target
-        await self.db.commit()
-
-        direction = "升级" if _PLAN_ORDER[target] > _PLAN_ORDER[old_plan] else "降级"
-        self._record_audit(user, old_plan, target, direction, charge.transaction_no)
-        await self.db.refresh(subscription)
-        self.operating_successfully(
-            CurrentSubscriptionResponseData(
-                planCode=user.plan,
-                status=subscription.status,
-                billingCycle=subscription.billing_cycle,
-                unitPrice=float(subscription.unit_price),
-                startedAt=_iso_or_none(subscription.started_at),
-                currentPeriodEnd=_iso_or_none(subscription.current_period_end),
-                canceledAt=None,
-                stripeEnabled=billing.stripe_enabled(),
-            )
-        )
-
-    async def _cancel_active_subscriptions(self, user_id: int, now: datetime) -> None:
-        actives = (
-            await self.db.scalars(
-                select(Subscription).where(
-                    Subscription.user_id == user_id,
-                    Subscription.status == SubscriptionStatusEnum.ACTIVE,
-                )
-            )
-        ).all()
-        for sub in actives:
-            sub.status = SubscriptionStatusEnum.CANCELED
-            sub.canceled_at = now
-
-    def _build_invoice(self, user_id: int, subscription_id: int, plan: Plan, amount: float) -> Invoice:
-        now = datetime.now(UTC)
-        invoice_no = f"INV-{now.strftime('%Y%m')}-{now.strftime('%d%H%M%S')}"
-        return Invoice(
-            user_id=user_id,
-            subscription_id=subscription_id,
-            invoice_no=invoice_no,
-            plan_code=plan.code,
-            item="subscription.invoice.subscription",
-            amount=amount,
-            currency="USD",
-            status=InvoiceStatusEnum.PAID,
-            issued_at=now,
-        )
-
-    def _record_audit(
-        self, user: User, old_plan: PlanEnum, target: PlanEnum, direction: str, transaction_no: str
-    ) -> None:
-        if self._audit_context:
-            self._audit_context.category = AuditCategoryEnum.SUBSCRIPTION
-            self._audit_context.actor_type = ActorTypeEnum.USER
-            self._audit_context.actor_id = str(user.id)
-            self._audit_context.actor_name = user.display_name or user.email
-            self._audit_context.message = f"{direction}套餐 {old_plan.value} → {target.value}"
-        self.set_audit_resource_id(str(user.id))
-        self.set_audit_changes({"plan": {"old": old_plan.value, "new": target.value}})
-        self.set_audit_metadata("transactionNo", transaction_no)
-
-
-class CancelSubscriptionViewModel(BaseViewModel):
-    """取消订阅 → 降级为免费版（模拟，不涉及真实退款），写审计。"""
-
-    audit_action = AuditActionEnum.CANCEL
-    audit_resource = "subscription"
-    audit_enabled = True
-
-    def __init__(self, request: Request, db: AsyncSession, checker: PermissionChecker) -> None:
-        super().__init__(request=request)
-        self.checker = checker
-        self.db = db
-
-    async def before(self) -> None:
-        await super().before()
-        self.checker.require_auth()
-
-        user = await self.db.get(User, int(self.checker.user_id))
-        if user is None:
-            self.unauthorized(AUTH_INVALID_MESSAGE)
-            return
-
-        if user.plan == PlanEnum.FREE:
-            self.nothing_changed()
-            return
-
-        old_plan = user.plan
-        now = datetime.now(UTC)
-        actives = (
-            await self.db.scalars(
-                select(Subscription).where(
-                    Subscription.user_id == user.id,
-                    Subscription.status == SubscriptionStatusEnum.ACTIVE,
-                )
-            )
-        ).all()
-        for sub in actives:
-            sub.status = SubscriptionStatusEnum.CANCELED
-            sub.canceled_at = now
-
-        user.plan = PlanEnum.FREE
-        await self.db.commit()
-
-        if self._audit_context:
-            self._audit_context.category = AuditCategoryEnum.SUBSCRIPTION
-            self._audit_context.actor_type = ActorTypeEnum.USER
-            self._audit_context.actor_id = str(user.id)
-            self._audit_context.actor_name = user.display_name or user.email
-            self._audit_context.message = f"取消订阅，{old_plan.value} → free"
-        self.set_audit_resource_id(str(user.id))
-        self.set_audit_changes({"plan": {"old": old_plan.value, "new": PlanEnum.FREE.value}})
-        self.operating_successfully()
 
 
 class ListUsageViewModel(BaseViewModel):
@@ -615,7 +432,7 @@ class ListInvoicesViewModel(BaseViewModel):
 
 
 class DownloadInvoiceViewModel(BaseViewModel):
-    """发票下载（service stub 生成占位文件，base64 返回）。"""
+    """发票下载：返回 Stripe 托管发票 PDF 链接（前端新开窗口打开）。"""
 
     audit_action = AuditActionEnum.EXPORT
     audit_resource = "invoice"
@@ -637,44 +454,134 @@ class DownloadInvoiceViewModel(BaseViewModel):
         if invoice is None or invoice.user_id != int(self.checker.user_id):
             self.not_found("发票不存在")
             return
+        if not invoice.external_url:
+            self.not_found("发票文件暂不可用")
+            return
 
         if self._audit_context:
             self._audit_context.category = AuditCategoryEnum.SUBSCRIPTION
             self._audit_context.actor_type = ActorTypeEnum.USER
             self._audit_context.actor_id = self.checker.user_id
         self.set_audit_resource_id(str(invoice.id))
-
-        # Stripe 发票：直接返回托管 PDF 链接，前端新开窗口打开；mock 发票返回 base64 文本占位。
-        if invoice.external_url:
-            self.operating_successfully(
-                InvoiceDownloadResponseData(
-                    invoiceNo=invoice.invoice_no,
-                    filename=f"{invoice.invoice_no}.pdf",
-                    contentType="application/pdf",
-                    url=invoice.external_url,
-                )
-            )
-            return
-
-        doc = render_invoice_document(
-            invoice.invoice_no,
-            item=invoice.item,
-            amount=float(invoice.amount),
-            currency=invoice.currency,
-        )
         self.operating_successfully(
             InvoiceDownloadResponseData(
                 invoiceNo=invoice.invoice_no,
-                filename=doc.filename,
-                contentType=doc.content_type,
-                contentBase64=base64.b64encode(doc.content).decode("ascii"),
-                sizeBytes=doc.size_bytes,
+                filename=f"{invoice.invoice_no}.pdf",
+                contentType="application/pdf",
+                url=invoice.external_url,
             )
         )
 
 
+class ChangePlanViewModel(BaseViewModel):
+    """套餐即时变更（POST /subscription/change）：未启用 Stripe 的本地直切路径。
+
+    启用 Stripe 后付费套餐必须走 Checkout 完成支付，本端点直接拒绝，防止绕过计费。
+    """
+
+    audit_action = AuditActionEnum.UPDATE
+    audit_resource = "subscription"
+    audit_enabled = True
+
+    def __init__(self, request: Request, db: AsyncSession, form: ChangePlanForm, checker: PermissionChecker) -> None:
+        super().__init__(request=request)
+        self.form = form
+        self.checker = checker
+        self.db = db
+
+    async def before(self) -> None:
+        await super().before()
+        self.checker.require_auth()
+
+        user = await self.db.get(User, int(self.checker.user_id))
+        if user is None:
+            self.unauthorized(AUTH_INVALID_MESSAGE)
+            return
+        target = self.form.targetPlan
+        if target == PlanEnum.FREE:
+            self.illegal_parameters("降级为免费版请走取消订阅")
+            return
+        if target == user.plan:
+            self.nothing_changed()
+            return
+        if billing.stripe_enabled():
+            self.illegal_parameters("已启用在线支付，请通过结账流程切换套餐")
+            return
+        plan = await _get_plan(self.db, target)
+        if plan is None:
+            self.not_found("目标套餐不存在")
+            return
+
+        subscription = await _apply_local_change(self.db, user, plan, self.form.billingCycle)
+        if self._audit_context:
+            self._audit_context.category = AuditCategoryEnum.SUBSCRIPTION
+            self._audit_context.actor_type = ActorTypeEnum.USER
+            self._audit_context.actor_id = self.checker.user_id
+        self.set_audit_resource_id(str(subscription.id))
+        self.operating_successfully(_build_current_subscription(user.plan, subscription))
+
+
+class CancelSubscriptionViewModel(BaseViewModel):
+    """取消订阅（POST /subscription/cancel）：撤销 active 订阅并降回免费套餐。
+
+    若订阅由 Stripe 管理（有 stripe_subscription_id 且已启用 Stripe），先取消 Stripe 侧订阅，
+    避免本地降级后 Stripe 继续扣费。
+    """
+
+    audit_action = AuditActionEnum.UPDATE
+    audit_resource = "subscription"
+    audit_enabled = True
+
+    def __init__(self, request: Request, db: AsyncSession, checker: PermissionChecker) -> None:
+        super().__init__(request=request)
+        self.checker = checker
+        self.db = db
+
+    async def before(self) -> None:
+        await super().before()
+        self.checker.require_auth()
+
+        user = await self.db.get(User, int(self.checker.user_id))
+        if user is None:
+            self.unauthorized(AUTH_INVALID_MESSAGE)
+            return
+        actives = (
+            await self.db.scalars(
+                select(Subscription).where(
+                    Subscription.user_id == user.id,
+                    Subscription.status == SubscriptionStatusEnum.ACTIVE,
+                )
+            )
+        ).all()
+        if not actives and user.plan == PlanEnum.FREE:
+            self.nothing_changed()
+            return
+
+        for sub in actives:
+            if sub.stripe_subscription_id and billing.stripe_enabled():
+                try:
+                    billing.cancel_subscription(sub.stripe_subscription_id)
+                except Exception as exc:
+                    logger.error(f"stripe 订阅取消失败({sub.stripe_subscription_id}): {exc}")
+                    self.system_error("取消订阅失败，请稍后重试或通过客户门户操作")
+                    return
+
+        now = datetime.now(UTC)
+        for sub in actives:
+            sub.status = SubscriptionStatusEnum.CANCELED
+            sub.canceled_at = now
+        user.plan = PlanEnum.FREE
+        await self.db.commit()
+        if self._audit_context:
+            self._audit_context.category = AuditCategoryEnum.SUBSCRIPTION
+            self._audit_context.actor_type = ActorTypeEnum.USER
+            self._audit_context.actor_id = self.checker.user_id
+        self.operating_successfully({})
+
+
 class CreateCheckoutViewModel(BaseViewModel):
-    """发起套餐变更：Stripe 已启用 → 创建订阅 Checkout 会话返回跳转 URL；未启用 → 即时应用(mock)。"""
+    """发起套餐升级 / 切换：已配 Stripe 创建 Checkout 会话返回跳转 URL（mode=checkout）；
+    未配 Stripe 回退本地即时生效（mode=applied），与前端 CheckoutResult 契约对齐。"""
 
     def __init__(self, request: Request, db: AsyncSession, form: ChangePlanForm, checker: PermissionChecker) -> None:
         super().__init__(request=request)
@@ -692,7 +599,7 @@ class CreateCheckoutViewModel(BaseViewModel):
             self.unauthorized(AUTH_INVALID_MESSAGE)
             return
         if target == PlanEnum.FREE:
-            self.illegal_parameters("降级为免费版请使用取消订阅 / 客户门户")
+            self.illegal_parameters("降级为免费版请走取消订阅")
             return
         if target == user.plan:
             self.nothing_changed()
@@ -703,36 +610,21 @@ class CreateCheckoutViewModel(BaseViewModel):
             return
 
         cycle = self.form.billingCycle
-        if billing.stripe_enabled():
-            await self._start_checkout(user, target, cycle)
-            return
-
-        # 未配置 Stripe：即时应用 mock 变更，返回当前订阅。
-        unit_price = float(plan.price_yearly_per_month) if cycle == BillingCycleEnum.YEARLY else float(plan.price_monthly)
-        simulate_subscription_charge(target.value, unit_price, "USD", billing_cycle=cycle.value)
-        subscription = await _apply_local_change(self.db, user, plan, cycle)
-        self.operating_successfully(
-            CheckoutResponseData(
-                mode="applied",
-                checkoutUrl=None,
-                subscription=CurrentSubscriptionResponseData(
-                    planCode=user.plan,
-                    status=subscription.status,
-                    billingCycle=subscription.billing_cycle,
-                    unitPrice=float(subscription.unit_price),
-                    startedAt=_iso_or_none(subscription.started_at),
-                    currentPeriodEnd=_iso_or_none(subscription.current_period_end),
-                    canceledAt=None,
-                    stripeEnabled=False,
-                ),
+        if not billing.stripe_enabled():
+            subscription = await _apply_local_change(self.db, user, plan, cycle)
+            self.operating_successfully(
+                CheckoutResponseData(
+                    mode="applied",
+                    checkoutUrl=None,
+                    subscription=_build_current_subscription(user.plan, subscription),
+                )
             )
-        )
-
-    async def _start_checkout(self, user: User, target: PlanEnum, cycle: BillingCycleEnum) -> None:
-        price_id = billing.price_id_for(target.value, cycle.value)
-        if not price_id:
-            self.illegal_parameters("该套餐 / 计费周期未配置 Stripe 价格")
             return
+        price_id = plan.stripe_price_yearly_id if cycle == BillingCycleEnum.YEARLY else plan.stripe_price_monthly_id
+        if not price_id:
+            self.illegal_parameters("该套餐 / 计费周期尚未同步到 Stripe，请先在后台同步")
+            return
+
         customer_id = billing.ensure_customer(
             customer_id=user.stripe_customer_id,
             email=user.email,
@@ -750,7 +642,9 @@ class CreateCheckoutViewModel(BaseViewModel):
             cancel_url=f"{base}/pricing?billing=cancel",
             metadata={"userId": str(user.id), "plan": target.value, "cycle": cycle.value},
         )
-        self.operating_successfully(CheckoutResponseData(mode="checkout", checkoutUrl=checkout_url, subscription=None))
+        self.operating_successfully(
+            CheckoutResponseData(mode="checkout", checkoutUrl=checkout_url, subscription=None)
+        )
 
 
 class CreatePortalViewModel(BaseViewModel):
@@ -899,3 +793,105 @@ class StripeWebhookViewModel(BaseViewModel):
             )
         )
         await self.db.commit()
+
+
+class _AdminSubscriptionViewModel(BaseViewModel):
+    """订阅后台基类：统一管理员校验。"""
+
+    checker: PermissionChecker
+
+    def _require_admin(self) -> bool:
+        self.checker.require_auth()
+        if self.checker.user_type != UserTypeEnum.ADMIN:
+            self.forbidden("仅管理员可访问")
+            return False
+        return True
+
+
+class UpdatePlanViewModel(_AdminSubscriptionViewModel):
+    """后台编辑套餐元数据（名称 / 标语 / 价格 / 特性 / 额度 / 排序 / 高亮），落库。仅管理员。"""
+
+    audit_action = AuditActionEnum.UPDATE
+    audit_resource = "plan"
+    audit_enabled = True
+
+    def __init__(
+        self, request: Request, db: AsyncSession, code: PlanEnum, form: PlanUpdateForm, checker: PermissionChecker
+    ) -> None:
+        super().__init__(request=request)
+        self.code = code
+        self.form = form
+        self.checker = checker
+        self.db = db
+
+    async def before(self) -> None:
+        await super().before()
+        if not self._require_admin():
+            return
+        plan = await _get_plan(self.db, self.code)
+        if plan is None:
+            self.not_found("套餐不存在")
+            return
+        form = self.form
+        plan.name = form.name
+        plan.tagline = form.tagline
+        plan.price_monthly = form.priceMonthly
+        plan.price_yearly_per_month = form.priceYearlyPerMonth
+        plan.highlight = form.highlight
+        plan.features = list(form.features)
+        plan.limit_bots = form.limitBots
+        plan.limit_strategies = form.limitStrategies
+        plan.limit_ai_analysis = form.limitAiAnalysis
+        plan.limit_backtests = form.limitBacktests
+        plan.sort_order = form.sortOrder
+        await self.db.commit()
+        await self.db.refresh(plan)
+        self.set_audit_resource_id(plan.code.value)
+        self.operating_successfully(_build_plan_response(plan))
+
+
+class SyncPlanToStripeViewModel(_AdminSubscriptionViewModel):
+    """后台「同步到 Stripe」：创建 / 更新 Product + 月付 / 年付 Price，回填价格 ID 到 plans 表。仅管理员。"""
+
+    audit_action = AuditActionEnum.UPDATE
+    audit_resource = "plan"
+    audit_enabled = True
+
+    def __init__(self, request: Request, db: AsyncSession, code: PlanEnum, checker: PermissionChecker) -> None:
+        super().__init__(request=request)
+        self.code = code
+        self.checker = checker
+        self.db = db
+
+    async def before(self) -> None:
+        await super().before()
+        if not self._require_admin():
+            return
+        if not billing.stripe_enabled():
+            self.system_error("支付服务未配置（缺少 STRIPE_SECRET_KEY）")
+            return
+        plan = await _get_plan(self.db, self.code)
+        if plan is None:
+            self.not_found("套餐不存在")
+            return
+        if float(plan.price_monthly) <= 0 and float(plan.price_yearly_per_month) <= 0:
+            self.illegal_parameters("免费套餐无需同步到 Stripe")
+            return
+
+        result = billing.sync_plan_to_stripe(
+            code=plan.code.value,
+            name=f"StratArk {plan.code.value.upper()}",
+            price_monthly=float(plan.price_monthly),
+            price_yearly_per_month=float(plan.price_yearly_per_month),
+            product_id=plan.stripe_product_id,
+            price_monthly_id=plan.stripe_price_monthly_id,
+            price_yearly_id=plan.stripe_price_yearly_id,
+        )
+        plan.stripe_product_id = result["product_id"]
+        plan.stripe_price_monthly_id = result["price_monthly_id"]
+        plan.stripe_price_yearly_id = result["price_yearly_id"]
+        await self.db.commit()
+        await self.db.refresh(plan)
+        self.set_audit_resource_id(plan.code.value)
+        self.set_audit_metadata("stripeProductId", str(plan.stripe_product_id))
+        self.operating_successfully(_build_plan_response(plan))

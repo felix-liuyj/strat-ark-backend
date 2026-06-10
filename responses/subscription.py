@@ -69,7 +69,7 @@ class CurrentSubscriptionResponseData(ApiResponseModel):
     startedAt: str | None = Field(None, description="开始时间")
     currentPeriodEnd: str | None = Field(None, description="下次续费时间")
     canceledAt: str | None = Field(None, description="取消时间")
-    stripeEnabled: bool = Field(False, description="是否已启用 Stripe（前端据此决定走 Checkout/Portal 还是即时 mock）")
+    stripeEnabled: bool = Field(..., description="平台是否启用 Stripe（决定前端展示客户门户还是本地取消）")
 
 
 class InvoiceResponseData(ApiResponseModel):
@@ -86,23 +86,23 @@ class InvoiceResponseData(ApiResponseModel):
 
 
 class InvoiceDownloadResponseData(ApiResponseModel):
-    """发票下载产物：Stripe 发票返回托管 PDF 链接(url)，mock 发票返回 base64 文本占位。"""
+    """发票下载产物：优先返回 Stripe 托管 PDF 链接（url），无链接时返回内联 base64 内容。"""
 
     invoiceNo: str = Field(..., description="发票号")
     filename: str = Field(..., description="文件名")
     contentType: str = Field(..., description="内容类型")
-    contentBase64: str = Field("", description="文件内容 base64 编码（mock 占位；Stripe 路径为空）")
-    sizeBytes: int = Field(0, description="文件字节数")
-    url: str | None = Field(None, description="Stripe 托管发票 PDF 链接（存在则前端优先打开）")
+    contentBase64: str | None = Field(None, description="文件内容 base64（url 为空时提供）")
+    sizeBytes: int | None = Field(None, description="文件字节数（contentBase64 提供时有值）")
+    url: str | None = Field(None, description="Stripe 托管发票 PDF 链接")
 
 
 class CheckoutResponseData(ApiResponseModel):
-    """套餐变更结果：Stripe 已启用时返回 Checkout 跳转 URL；否则即时应用并返回当前订阅。"""
+    """套餐切换结果：mode=checkout 时跳转 Stripe；mode=applied（未配置 Stripe）即时生效。"""
 
-    mode: str = Field(..., description="checkout=需跳转 Stripe 支付；applied=已即时应用(mock)")
-    checkoutUrl: str | None = Field(None, description="Stripe Checkout 跳转地址（mode=checkout）")
+    mode: str = Field(..., description="结账模式：checkout（跳转 Stripe）/ applied（即时生效）")
+    checkoutUrl: str | None = Field(None, description="Stripe Checkout 跳转地址（mode=checkout 时有值）")
     subscription: CurrentSubscriptionResponseData | None = Field(
-        None, description="即时应用后的当前订阅（mode=applied）"
+        None, description="即时生效后的订阅概况（mode=applied 时有值）"
     )
 
 

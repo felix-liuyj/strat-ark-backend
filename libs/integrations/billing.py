@@ -1,17 +1,14 @@
-"""计费 / 发票服务（Stripe 订阅 Checkout + Customer Portal + Webhook；config 驱动 + mock 回退）。
+"""计费集成（Stripe 订阅 Checkout + Customer Portal + Webhook + 产品/价格同步）。
 
-- 配置了 ``STRIPE_SECRET_KEY`` 时：经官方 stripe SDK 创建订阅 Checkout 会话 / 客户门户会话、
-  校验 Webhook 签名；订阅激活与发票以 Stripe Webhook 为准（异步流程，源真相在 Stripe）。
-- 未配置 Stripe 时：回退到本地 mock（``simulate_subscription_charge`` 即时成功 +
-  ``render_invoice_document`` 文本占位），应用仍可运行、演示流程不变。
+经官方 stripe SDK 实现订阅支付：创建客户、订阅 Checkout 会话、客户门户会话、Webhook 验签，
+以及把后台落库的套餐同步为 Stripe Product + 周期 Price（价格 ID 回填到 plans 表）。
 
+不再保留本地 mock 计费：订阅激活与发票以 Stripe Webhook 为准（异步流程，源真相在 Stripe）。
 签名 / 密钥 / Webhook 验签只在后端；前端只拿后端返回的跳转 URL，不接触任何密钥。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 import stripe
@@ -20,118 +17,24 @@ from configs import get_settings
 from libs.logger import logger
 
 __all__ = (
-    "InvoiceDocumentResult",
-    "SubscriptionChargeResult",
+    "cancel_subscription",
     "construct_webhook_event",
     "create_billing_portal_session",
     "create_checkout_session",
     "ensure_customer",
-    "price_id_for",
-    "render_invoice_document",
-    "simulate_subscription_charge",
     "stripe_enabled",
+    "sync_plan_to_stripe",
 )
 
 
-@dataclass(slots=True)
-class SubscriptionChargeResult:
-    """模拟下单结果。
-
-    真实实现：调用支付服务创建订阅订单并返回交易号；当前阶段恒为成功且零真实扣费。
-    """
-
-    ok: bool
-    amount: float
-    currency: str
-    # 模拟交易号（真实实现为支付服务返回的订单 / 交易标识）。
-    transaction_no: str
-    message: str
-    charged_at: datetime
-
-
-@dataclass(slots=True)
-class InvoiceDocumentResult:
-    """发票文件产出结果。
-
-    真实实现：由发票服务渲染 PDF 并返回字节流或对象存储下载链接；此处给出占位字节内容。
-    """
-
-    filename: str
-    content_type: str
-    # 模拟发票文件字节内容（真实实现为 PDF 二进制）。
-    content: bytes
-    size_bytes: int
-
-
-def simulate_subscription_charge(
-    plan_code: str,
-    amount: float,
-    currency: str = "USD",
-    *,
-    billing_cycle: str = "monthly",
-) -> SubscriptionChargeResult:
-    """模拟订阅扣费（无真实支付）。
-
-    免费套餐（amount<=0）直接返回零额成功；付费套餐返回拟真交易号。
-    真实实现：用支付服务下单并轮询 / 回调确认支付状态。
-    """
-    now = datetime.now(UTC)
-    transaction_no = f"SIM-{plan_code.upper()}-{now.strftime('%Y%m%d%H%M%S')}"
-    message = "免费套餐无需支付" if amount <= 0 else "模拟扣费成功 · 未产生真实费用"
-    return SubscriptionChargeResult(
-        ok=True,
-        amount=amount,
-        currency=currency,
-        transaction_no=transaction_no,
-        message=message,
-        charged_at=now,
-    )
-
-
-def render_invoice_document(
-    invoice_no: str,
-    *,
-    item: str,
-    amount: float,
-    currency: str = "USD",
-) -> InvoiceDocumentResult:
-    """生成可下载发票文件（mock 文本占位）。
-
-    真实实现：发票服务按模板渲染 PDF；此处返回纯文本字节，前端可直接下载。
-    """
-    lines = [
-        "StratArk Invoice (模拟发票 · 非真实付款凭证)",
-        f"Invoice No: {invoice_no}",
-        f"Item: {item}",
-        f"Amount: {amount:.2f} {currency}",
-        "Status: PAID (simulated)",
-        "本发票为演示环境生成，不代表任何真实交易。",
-    ]
-    content = ("\n".join(lines)).encode("utf-8")
-    return InvoiceDocumentResult(
-        filename=f"{invoice_no}.txt",
-        content_type="text/plain; charset=utf-8",
-        content=content,
-        size_bytes=len(content),
-    )
-
-
-# ============================ Stripe 集成（config 驱动，未配置不触达） ============================
-
-
 def stripe_enabled() -> bool:
-    """是否已配置 Stripe（未配置则订阅走 mock 回退）。"""
+    """是否已配置 Stripe 密钥（未配置时支付相关端点返回明确错误，不再回退 mock）。"""
     return bool(get_settings().STRIPE_SECRET_KEY)
 
 
 def _init_stripe() -> None:
     """调用前设置 stripe SDK 密钥。"""
     stripe.api_key = get_settings().STRIPE_SECRET_KEY
-
-
-def price_id_for(plan_code: str, billing_cycle: str) -> str | None:
-    """套餐 × 计费周期 → Stripe Price ID（取自 settings；免费套餐 / 未配置返回 None）。"""
-    return getattr(get_settings(), f"STRIPE_PRICE_{plan_code.upper()}_{billing_cycle.upper()}", None)
 
 
 def ensure_customer(*, customer_id: str | None, email: str, name: str, user_id: str) -> str:
@@ -171,6 +74,12 @@ def create_checkout_session(
     return str(session["id"]), str(session["url"])
 
 
+def cancel_subscription(subscription_id: str) -> None:
+    """立即取消 Stripe 订阅（本地取消前调用，避免本地降级后 Stripe 继续扣费）。"""
+    _init_stripe()
+    stripe.Subscription.cancel(subscription_id)
+
+
 def create_billing_portal_session(*, customer_id: str, return_url: str) -> str:
     """创建 Customer Portal 会话（管理订阅 / 支付方式 / 发票），返回门户 URL。"""
     _init_stripe()
@@ -182,3 +91,67 @@ def construct_webhook_event(payload: bytes, sig_header: str) -> Any:
     """校验 Stripe-Signature 并构造 Webhook 事件（验签失败抛 stripe 异常，由调用方拦截）。"""
     _init_stripe()
     return stripe.Webhook.construct_event(payload, sig_header, get_settings().STRIPE_WEBHOOK_SECRET)
+
+
+def _ensure_price(product_id: str, existing_id: str | None, unit_amount: int, currency: str, interval: str) -> str | None:
+    """确保产品在该计费周期下有匹配金额的 recurring Price：金额未变复用旧价，变更则新建并归档旧价。
+
+    ``unit_amount`` 为「分」；<=0（免费 / 该周期无价）返回 None。
+    """
+    if unit_amount <= 0:
+        return None
+    if existing_id:
+        try:
+            existing = stripe.Price.retrieve(existing_id)
+            recurring = existing.get("recurring") or {}
+            if (
+                int(existing.get("unit_amount") or 0) == unit_amount
+                and recurring.get("interval") == interval
+                and existing.get("active")
+            ):
+                return existing_id
+        except Exception as exc:
+            logger.warning(f"stripe price retrieve 失败({existing_id})，将新建: {exc}")
+    price = stripe.Price.create(
+        product=product_id,
+        unit_amount=unit_amount,
+        currency=currency,
+        recurring={"interval": interval},
+    )
+    if existing_id and existing_id != price["id"]:
+        try:
+            stripe.Price.modify(existing_id, active=False)
+        except Exception as exc:
+            logger.warning(f"归档旧 stripe price 失败({existing_id}): {exc}")
+    return str(price["id"])
+
+
+def sync_plan_to_stripe(
+    *,
+    code: str,
+    name: str,
+    price_monthly: float,
+    price_yearly_per_month: float,
+    currency: str = "usd",
+    product_id: str | None = None,
+    price_monthly_id: str | None = None,
+    price_yearly_id: str | None = None,
+) -> dict[str, str | None]:
+    """把后台落库的套餐同步到 Stripe：创建 / 更新 Product 与月付 / 年付 Price，返回回填用的 ID。
+
+    年付 Price 的年度金额 = ``price_yearly_per_month * 12``。返回 {product_id, price_monthly_id,
+    price_yearly_id}（免费 / 该周期金额为 0 时对应 price 为 None）。
+    """
+    _init_stripe()
+    if product_id:
+        product = stripe.Product.modify(product_id, name=name, active=True)
+    else:
+        product = stripe.Product.create(name=name, metadata={"planCode": code})
+    resolved_product_id = str(product["id"])
+    monthly_amount = round(float(price_monthly) * 100)
+    yearly_amount = round(float(price_yearly_per_month) * 12 * 100)
+    return {
+        "product_id": resolved_product_id,
+        "price_monthly_id": _ensure_price(resolved_product_id, price_monthly_id, monthly_amount, currency, "month"),
+        "price_yearly_id": _ensure_price(resolved_product_id, price_yearly_id, yearly_amount, currency, "year"),
+    }

@@ -82,6 +82,10 @@ class Plan(Base, TimestampMixin):
     limit_ai_analysis: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     limit_backtests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Stripe 产品 / 价格映射（后台「同步到 Stripe」时创建并回填；价格 ID 不再走 env）。
+    stripe_product_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+    stripe_price_monthly_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+    stripe_price_yearly_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
 
 
 class Subscription(Base, TimestampMixin):
