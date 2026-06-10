@@ -1,7 +1,8 @@
 """交易所账户 view models。
 
-增删改查 + 连接测试 + 同步余额 + 查看权限 + 设为默认。API Key/Secret 加密存储
-（stub：保存掩码 + 占位密文），不明文回显。外部交易所交互一律走 libs.integrations.exchange。
+增删改查 + 连接测试 + 同步余额 + 查看权限 + 设为默认。API Key/Secret 经 Fernet
+可逆加密存储（libs/crypto），不明文回显；已保存账户的真实请求在本层解密后调
+libs.integrations.exchange。历史占位密文（enc::N）解密失败时提示重新录入，不回退拟真。
 """
 
 from datetime import UTC, datetime
@@ -16,7 +17,9 @@ from forms.exchange import (
     ExchangeConnectionTestForm,
 )
 from libs.auth.permissions import PermissionChecker
+from libs.crypto import decrypt_text, encrypt_text
 from libs.integrations import exchange as exchange_service
+from libs.integrations.exchange import ExchangeCredentialsError, ExchangeRequestError
 from models.bot import Bot
 from models.exchange import (
     ExchangeAccount,
@@ -52,14 +55,21 @@ _PERMISSION_LABELS: dict[ExchangePermissionEnum, str] = {
 
 
 def _mask_api_key(api_key: str) -> str:
-    """生成 API Key 掩码（仅保留尾 4 位），不明文存储或回显。"""
+    """生成 API Key 掩码（仅保留尾 4 位），用于回显，明文密文分开存。"""
     tail = api_key.strip()[-4:] if len(api_key.strip()) >= 4 else api_key.strip()
     return f"····{tail}"
 
 
-def _encrypt_secret(api_secret: str) -> str:
-    """加密 API Secret（stub）：真实实现走 KMS/fernet，此处仅占位密文，绝不可逆出明文。"""
-    return f"enc::{len(api_secret.strip())}"
+_CREDENTIALS_UNAVAILABLE = "凭证不可用（历史版本保存的账户无法解密），请编辑账户重新录入 API Key 与 Secret"
+
+
+def _decrypt_credentials(account: ExchangeAccount) -> tuple[str, str] | None:
+    """解密已保存账户的明文凭证；历史占位密文 / 密钥不匹配返回 None。"""
+    api_key = decrypt_text(account.api_key_cipher)
+    api_secret = decrypt_text(account.api_secret_cipher)
+    if not api_key or not api_secret:
+        return None
+    return api_key, api_secret
 
 
 def _format_usdt(amount: float) -> str:
@@ -160,11 +170,20 @@ class CreateExchangeAccountViewModel(_AuthedExchangeViewModel):
             self.illegal_parameters("API Key 与 Secret 不能为空")
             return
 
-        # 通过 service 做连接测试 + 权限探测，回填安全检查位（mock）。
-        connection = exchange_service.test_connection(self.form.provider.value, self.form.apiKey, self.form.apiSecret)
-        permissions = exchange_service.fetch_permissions(
-            self.form.provider.value, self.form.apiKey, self.form.apiSecret
-        )
+        # 真实连接测试 + 权限探测：凭证无效则拒绝保存（无回退）。
+        try:
+            connection = exchange_service.test_connection(
+                self.form.provider.value, self.form.apiKey, self.form.apiSecret
+            )
+            if not connection.ok:
+                self.illegal_parameters(connection.message)
+                return
+            permissions = exchange_service.fetch_permissions(
+                self.form.provider.value, self.form.apiKey, self.form.apiSecret
+            )
+        except (ExchangeCredentialsError, ExchangeRequestError) as exc:
+            self.illegal_parameters(str(exc))
+            return
         ip_whitelist = (self.form.ipWhitelist or "").strip()
 
         # 首个账户自动设为默认。
@@ -175,14 +194,15 @@ class CreateExchangeAccountViewModel(_AuthedExchangeViewModel):
             user_id=int(self.checker.user_id),
             name=name,
             provider=self.form.provider,
-            status=ExchangeStatusEnum.CONNECTED if connection.ok else ExchangeStatusEnum.ERROR,
+            status=ExchangeStatusEnum.CONNECTED,
             permission=(
                 ExchangePermissionEnum.READ_TRADE
                 if not permissions.can_withdraw
                 else ExchangePermissionEnum.READ_TRADE_WITHDRAW
             ),
             api_key_mask=_mask_api_key(self.form.apiKey),
-            api_secret_cipher=_encrypt_secret(self.form.apiSecret),
+            api_key_cipher=encrypt_text(self.form.apiKey.strip()),
+            api_secret_cipher=encrypt_text(self.form.apiSecret.strip()),
             ip_whitelist=ip_whitelist,
             is_default=existing_count is None,
             withdraw_disabled=not permissions.can_withdraw,
@@ -226,8 +246,9 @@ class UpdateExchangeAccountViewModel(_AuthedExchangeViewModel):
             account.name = name
         if self.form.apiKey is not None and self.form.apiKey.strip():
             account.api_key_mask = _mask_api_key(self.form.apiKey)
+            account.api_key_cipher = encrypt_text(self.form.apiKey.strip())
         if self.form.apiSecret is not None and self.form.apiSecret.strip():
-            account.api_secret_cipher = _encrypt_secret(self.form.apiSecret)
+            account.api_secret_cipher = encrypt_text(self.form.apiSecret.strip())
         if self.form.ipWhitelist is not None:
             ip_whitelist = self.form.ipWhitelist.strip()
             account.ip_whitelist = ip_whitelist
@@ -307,7 +328,13 @@ class TestExchangeConnectionViewModel(_AuthedExchangeViewModel):
             self.not_found("交易所账户不存在")
             return
 
-        result = exchange_service.test_connection(account.provider.value, account.api_key_mask, "")
+        credentials = _decrypt_credentials(account)
+        if credentials is None:
+            self.operating_failed(_CREDENTIALS_UNAVAILABLE)
+            return
+        result = exchange_service.test_connection(account.provider.value, *credentials)
+        account.status = ExchangeStatusEnum.CONNECTED if result.ok else ExchangeStatusEnum.ERROR
+        await self.db.commit()
         self.operating_successfully(_build_connection_response(result))
 
 
@@ -330,9 +357,13 @@ class TestRawExchangeConnectionViewModel(_AuthedExchangeViewModel):
         if not self.form.apiKey.strip() or not self.form.apiSecret.strip():
             self.illegal_parameters("API Key 与 Secret 不能为空")
             return
-        result = exchange_service.test_connection(
-            self.form.provider.value, self.form.apiKey, self.form.apiSecret
-        )
+        try:
+            result = exchange_service.test_connection(
+                self.form.provider.value, self.form.apiKey, self.form.apiSecret
+            )
+        except ExchangeCredentialsError as exc:
+            self.illegal_parameters(str(exc))
+            return
         self.operating_successfully(_build_connection_response(result))
 
 
@@ -357,7 +388,15 @@ class SyncExchangeBalanceViewModel(_AuthedExchangeViewModel):
             self.not_found("交易所账户不存在")
             return
 
-        balance = exchange_service.fetch_balance(account.provider.value, account.api_key_mask, "")
+        credentials = _decrypt_credentials(account)
+        if credentials is None:
+            self.operating_failed(_CREDENTIALS_UNAVAILABLE)
+            return
+        try:
+            balance = exchange_service.fetch_balance(account.provider.value, *credentials)
+        except (ExchangeCredentialsError, ExchangeRequestError) as exc:
+            self.operating_failed(str(exc))
+            return
         synced_at = balance.synced_at.strftime("%Y-%m-%d %H:%M")
         account.balance_usdt = balance.total_usdt
         account.last_synced_at = synced_at
@@ -394,7 +433,15 @@ class GetExchangePermissionViewModel(_AuthedExchangeViewModel):
             self.not_found("交易所账户不存在")
             return
 
-        permissions = exchange_service.fetch_permissions(account.provider.value, account.api_key_mask, "")
+        credentials = _decrypt_credentials(account)
+        if credentials is None:
+            self.operating_failed(_CREDENTIALS_UNAVAILABLE)
+            return
+        try:
+            permissions = exchange_service.fetch_permissions(account.provider.value, *credentials)
+        except (ExchangeCredentialsError, ExchangeRequestError) as exc:
+            self.operating_failed(str(exc))
+            return
         self.operating_successfully(
             ExchangePermissionResponseData(
                 canRead=permissions.can_read,

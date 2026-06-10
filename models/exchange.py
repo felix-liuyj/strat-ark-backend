@@ -1,12 +1,13 @@
 """交易所账户 ORM 模型与枚举。
 
-API Key/Secret 加密存储（stub：仅保存掩码 + 占位密文），任何接口都不明文回显。
+API Key/Secret 经 Fernet 加密存储（libs/crypto，密钥 ENCRYPT_KEY），任何接口都不
+明文回显（仅回显掩码）；明文只在签名请求 / 启动 live bot 注入实例时解密使用。
 归属字段 user_id 关联 users 表，删除用户级联删除其交易所账户。
 """
 
 from enum import StrEnum
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from libs.ctrl.db.sqlalchemy import Base, TimestampMixin
@@ -61,9 +62,11 @@ class ExchangeAccount(Base, TimestampMixin):
         String(30), nullable=False, default=ExchangePermissionEnum.READ_TRADE
     )
 
-    # API 凭证加密存储（stub）：仅保存掩码供展示，密文为占位符；绝不明文回显。
+    # API 凭证 Fernet 加密存储：掩码仅供展示；key/secret 密文可逆（libs/crypto），绝不明文回显。
+    # 历史数据可能是占位密文（enc::N，不可逆），解密失败时提示用户重新录入。
     api_key_mask: Mapped[str] = mapped_column(String(64), nullable=False, default="")
-    api_secret_cipher: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    api_key_cipher: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    api_secret_cipher: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ip_whitelist: Mapped[str] = mapped_column(String(255), nullable=False, default="")
 
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
