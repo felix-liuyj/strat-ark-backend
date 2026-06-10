@@ -8,6 +8,8 @@ dependencies = [
     # Web 框架与 API
     "fastapi",
     "uvicorn[standard]",
+    # 生产进程管理（deploy/deploy.sh systemd 服务以 gunicorn + UvicornWorker 启动）
+    "gunicorn",
     "jinja2",
     "python-multipart",
     "httpx",
@@ -15,6 +17,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "psycopg[binary]>=3.2",
     "greenlet>=3.0",
+    "alembic>=1.13",
     "python-dotenv",
     # 数据验证与配置
     "pydantic",

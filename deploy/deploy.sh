@@ -266,6 +266,20 @@ install_deps() {
 }
 
 # ============================================================
+# 5.5 数据库迁移（部署期执行，应用启动不跑 ALTER）
+# ============================================================
+run_migrations() {
+    info "执行数据库迁移 alembic upgrade head..."
+    local alembic_bin="${VENV_DIR}/bin/alembic"
+    if [[ ! -x "$alembic_bin" ]]; then
+        error "未找到 alembic 可执行文件: ${alembic_bin}（请确认依赖安装成功）"
+    fi
+    # 迁移读取 configs（pydantic-settings 自动加载 ${APP_DIR}/.env），以部署用户身份执行
+    (cd "$APP_DIR" && sudo -u "$APP_USER" "$alembic_bin" upgrade head) \
+        || error "数据库迁移失败，请检查 DATABASE_URL 与迁移脚本"
+}
+
+# ============================================================
 # 6. 配置 systemd 服务
 # ============================================================
 setup_systemd() {
@@ -491,6 +505,7 @@ main() {
     ensure_user
     deploy_code
     install_deps
+    run_migrations
     setup_systemd
     enable_and_start
 

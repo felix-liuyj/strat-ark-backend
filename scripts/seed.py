@@ -14,6 +14,7 @@
 """
 
 import asyncio
+import os
 
 from sqlalchemy import select
 
@@ -22,7 +23,8 @@ from models.account import PlanEnum, UserTypeEnum
 from models.strategy import Strategy, StrategyRiskEnum, StrategyStatusEnum, StrategyTypeEnum
 from models.user import User
 
-DEMO_PASSWORD = "strategy123"
+# 演示账号密码：默认仅用于本地 / 演示环境，可经环境变量覆盖。
+DEMO_PASSWORD = os.environ.get("SEED_DEMO_PASSWORD", "strategy123")
 
 DEMO_USERS: list[dict] = [
     {"email": "alex@stratark.io", "display_name": "Alex Chen", "user_type": UserTypeEnum.ADMIN, "plan": PlanEnum.PRO},
