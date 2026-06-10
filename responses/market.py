@@ -31,6 +31,7 @@ class MarketTickerResponseData(ApiResponseModel):
     signal: str = Field(..., description="AI 信号标签")
     signalTone: str = Field(..., description="信号配色：run / warn / neutral / live")
     marketType: str = Field(..., description="现货 spot / 合约 futures")
+    spark: list[float] = Field(default_factory=list, description="7D 日线收盘走势（行情列表/自选填充，其余场景为空）")
 
 
 class MarketOverviewResponseData(ApiResponseModel):

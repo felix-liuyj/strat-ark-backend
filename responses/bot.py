@@ -38,12 +38,12 @@ class BotListItemResponseData(ApiResponseModel):
     todayPnlLabel: str = Field(..., description="今日收益文案，例如 +2.3%")
     pnlPositive: bool = Field(..., description="今日收益是否为正")
     positions: int = Field(..., description="当前持仓数")
+    pairs: list[str] = Field(..., description="交易对列表")
 
 
 class BotDetailResponseData(BotListItemResponseData):
     exchangeAccountId: int = Field(..., description="交易所账户 ID")
     strategyId: int = Field(..., description="策略 ID")
-    pairs: list[str] = Field(..., description="交易对列表")
     stakeCurrency: str = Field(..., description="计价币种")
     stakeAmount: float = Field(..., description="单笔仓位金额")
     maxOpenTrades: int = Field(..., description="最大持仓数")

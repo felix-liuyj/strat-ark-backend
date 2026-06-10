@@ -9,6 +9,7 @@ REST base 可经 ``MARKET_DATA_REST_URL`` 覆盖（指向自建代理 / 镜像�
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,6 +19,7 @@ from configs import get_settings
 from libs.logger import logger
 
 __all__ = (
+    "VALID_CANDLE_INTERVALS",
     "Candle",
     "MarketOverview",
     "MarketTicker",
@@ -26,6 +28,7 @@ __all__ = (
     "TickerAiSnapshot",
     "TradeTick",
     "build_candles",
+    "build_spark",
     "get_heatmap",
     "get_market_overview",
     "get_order_book",
@@ -35,6 +38,21 @@ __all__ = (
     "get_trade_tape",
     "list_tickers",
 )
+
+# K 线周期白名单（与 Binance klines interval 对齐，前端周期切换器同源）。
+VALID_CANDLE_INTERVALS: tuple[str, ...] = ("1m", "15m", "1h", "4h", "1d")
+
+# 各周期对应的时间步长（回退 K 线生成时间轴用）。
+_INTERVAL_STEP: dict[str, timedelta] = {
+    "1m": timedelta(minutes=1),
+    "15m": timedelta(minutes=15),
+    "1h": timedelta(hours=1),
+    "4h": timedelta(hours=4),
+    "1d": timedelta(days=1),
+}
+
+# 7D 走势 sparkline 的取样点数（日线收盘价）。
+_SPARK_POINTS = 8
 
 # 公共行情源默认地址（可被 settings 覆盖 REST base）。
 _DEFAULT_REST = "https://api.binance.com"
@@ -72,6 +90,7 @@ class MarketTicker:
         signal: str,
         signal_tone: str,
         market_type: str,
+        spark: list[float] | None = None,
     ) -> None:
         self.symbol = symbol
         self.base = base
@@ -82,6 +101,8 @@ class MarketTicker:
         self.signal = signal
         self.signal_tone = signal_tone
         self.market_type = market_type
+        # 7D 日线收盘走势（仅列表/自选场景按需填充，避免无谓外呼）。
+        self.spark: list[float] = spark or []
 
 
 class Candle:
@@ -267,10 +288,11 @@ def _demo_tickers() -> list[MarketTicker]:
     return [t for sym, _, _ in _UNIVERSE if (t := _demo_ticker(sym)) is not None]
 
 
-def _demo_candles(symbol: str, count: int) -> list[Candle]:
+def _demo_candles(symbol: str, count: int, interval: str = "1h") -> list[Candle]:
     rng = _Rng(_seed_of(symbol))
     ref = _demo_ticker(symbol)
     price = ref.price if ref else 132.0
+    step = _INTERVAL_STEP.get(interval, _INTERVAL_STEP["1h"])
     now = datetime.now(UTC)
     candles: list[Candle] = []
     for i in range(count):
@@ -279,10 +301,15 @@ def _demo_candles(symbol: str, count: int) -> list[Candle]:
         high = max(open_, close) + rng.next() * (price * 0.006)
         low = min(open_, close) - rng.next() * (price * 0.006)
         volume = rng.next() * 1800 + 200
-        ts = int((now - timedelta(hours=count - i)).timestamp())
+        ts = int((now - step * (count - i)).timestamp())
         candles.append(Candle(ts=ts, open_=open_, high=high, low=low, close=close, volume=volume))
         price = close
     return candles
+
+
+def _demo_spark(symbol: str, points: int = _SPARK_POINTS) -> list[float]:
+    """确定性 7D 走势回退（按日线 demo K 线收盘价取样，离线联调可复现）。"""
+    return [round(c.close, 4) for c in _demo_candles(symbol, points, interval="1d")]
 
 
 def _demo_order_book(symbol: str, depth: int) -> OrderBookSnapshot:
@@ -343,8 +370,15 @@ def _ticker_from_binance(symbol: str, base: str, quote: str, row: dict[str, Any]
     return MarketTicker(symbol, base, quote, price, pct, vol, signal, tone, "spot")
 
 
-async def list_tickers() -> list[MarketTicker]:
-    """自选行情全表（Binance 24h ticker，失败回退 demo）。"""
+async def _attach_sparks(tickers: list[MarketTicker]) -> None:
+    """并发为一组 ticker 填充 7D 走势（单个失败仅影响该 ticker，回退确定性序列）。"""
+    sparks = await asyncio.gather(*(build_spark(t.symbol) for t in tickers))
+    for ticker, spark in zip(tickers, sparks):
+        ticker.spark = spark
+
+
+async def list_tickers(with_spark: bool = False) -> list[MarketTicker]:
+    """自选行情全表（Binance 24h ticker，失败回退 demo）。``with_spark`` 时附带 7D 走势。"""
     symbols = [_exchange_symbol(sym) for sym, _, _ in _UNIVERSE]
     try:
         import json
@@ -355,35 +389,47 @@ async def list_tickers() -> list[MarketTicker]:
         for sym, base, quote in _UNIVERSE:
             row = by_symbol.get(_exchange_symbol(sym))
             out.append(_ticker_from_binance(sym, base, quote, row) if row else _demo_ticker(sym))
-        return [t for t in out if t is not None]
+        tickers = [t for t in out if t is not None]
     except Exception as exc:
         logger.warning(f"market_data.list_tickers fallback to demo: {exc}")
-        return _demo_tickers()
+        tickers = _demo_tickers()
+    if with_spark:
+        await _attach_sparks(tickers)
+    return tickers
 
 
-async def get_ticker(symbol: str) -> MarketTicker | None:
-    """按交易对返回单条行情（Binance，失败回退 demo）。"""
+async def get_ticker(symbol: str, with_spark: bool = False) -> MarketTicker | None:
+    """按交易对返回单条行情（Binance，失败回退 demo）。``with_spark`` 时附带 7D 走势。"""
     base, quote = _split_symbol(symbol)
     canonical = f"{base}/{quote}"
     try:
         row = await _get_json(f"{_rest_base()}/api/v3/ticker/24hr", {"symbol": _exchange_symbol(symbol)})
         if isinstance(row, dict) and row.get("lastPrice") is not None:
-            return _ticker_from_binance(canonical, base, quote, row)
-        return _demo_ticker(canonical)
+            ticker = _ticker_from_binance(canonical, base, quote, row)
+        else:
+            ticker = _demo_ticker(canonical)
     except Exception as exc:
         logger.warning(f"market_data.get_ticker fallback to demo: {exc}")
-        return _demo_ticker(canonical)
+        ticker = _demo_ticker(canonical)
+    if ticker is not None and with_spark:
+        ticker.spark = await build_spark(canonical)
+    return ticker
 
 
-async def build_candles(symbol: str, count: int = 44) -> list[Candle]:
-    """K 线序列（Binance klines 1h，失败回退 demo）。"""
+def _normalize_interval(interval: str) -> str:
+    return interval if interval in _INTERVAL_STEP else "1h"
+
+
+async def build_candles(symbol: str, count: int = 44, interval: str = "1h") -> list[Candle]:
+    """K 线序列（Binance klines，周期见 ``VALID_CANDLE_INTERVALS``，失败回退 demo）。"""
+    interval = _normalize_interval(interval)
     try:
         rows = await _get_json(
             f"{_rest_base()}/api/v3/klines",
-            {"symbol": _exchange_symbol(symbol), "interval": "1h", "limit": count},
+            {"symbol": _exchange_symbol(symbol), "interval": interval, "limit": count},
         )
         if not isinstance(rows, list) or not rows:
-            return _demo_candles(symbol, count)
+            return _demo_candles(symbol, count, interval)
         return [
             Candle(
                 ts=int(k[0] // 1000),
@@ -397,7 +443,22 @@ async def build_candles(symbol: str, count: int = 44) -> list[Candle]:
         ]
     except Exception as exc:
         logger.warning(f"market_data.build_candles fallback to demo: {exc}")
-        return _demo_candles(symbol, count)
+        return _demo_candles(symbol, count, interval)
+
+
+async def build_spark(symbol: str, points: int = _SPARK_POINTS) -> list[float]:
+    """7D 走势序列（Binance 日线收盘价，失败回退确定性序列）。"""
+    try:
+        rows = await _get_json(
+            f"{_rest_base()}/api/v3/klines",
+            {"symbol": _exchange_symbol(symbol), "interval": "1d", "limit": points},
+        )
+        if not isinstance(rows, list) or not rows:
+            return _demo_spark(symbol, points)
+        return [round(float(k[4]), 4) for k in rows]
+    except Exception as exc:
+        logger.warning(f"market_data.build_spark fallback to demo: {exc}")
+        return _demo_spark(symbol, points)
 
 
 async def get_order_book(symbol: str, depth: int = 9) -> OrderBookSnapshot:
@@ -543,6 +604,7 @@ async def get_ticker_detail(symbol: str) -> tuple[MarketTicker, TickerAiSnapshot
         entry_high=round(ticker.price * 1.003, 4),
         stop_loss=round(lows * 0.997, 4),
         take_profit=[round(highs, 4), round(highs * 1.02, 4)],
-        generated_at=datetime.now(UTC).strftime("%H:%M"),
+        # ISO 时间戳，由前端按本地时区格式化展示。
+        generated_at=datetime.now(UTC).isoformat(),
     )
     return ticker, snapshot

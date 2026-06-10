@@ -136,11 +136,13 @@ async def remove_watchlist(
     "/market/tickers/{symbol:path}",
     response_model=BaseResponseModel[MarketDetailResponseData],
     summary="单币种详情",
-    description="返回单交易对的行情、K 线、订单簿、成交流与 AI 快照（symbol 含斜杠，如 BTC/USDT）。只读，无需登录。",
+    description="返回单交易对的行情、K 线、订单簿、成交流与 AI 快照（symbol 含斜杠，如 BTC/USDT；"
+    "timeframe 支持 1m / 15m / 1h / 4h / 1d）。只读，无需登录。",
     tags=["StratArk/行情"],
 )
 async def get_market_detail(
     request: Request,
     symbol: str = Path(..., description="交易对，如 BTC/USDT"),
+    timeframe: str = Query("1h", description="K 线周期：1m / 15m / 1h / 4h / 1d"),
 ) -> BaseResponseModel:
-    return await create_response(GetMarketDetailViewModel, request, symbol=symbol)
+    return await create_response(GetMarketDetailViewModel, request, symbol=symbol, timeframe=timeframe)

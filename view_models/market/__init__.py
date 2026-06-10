@@ -1,7 +1,7 @@
 """行情视图模型。
 
-行情数据全部来自交易所行情 service（拟真），只读端点不强制登录；自选交易对读写
-数据库且需登录。蜡烛图 / 订单簿 / 成交流以确定性 mock 保证前端联调可复现。
+行情数据来自 libs/integrations/market_data（Binance 公共 REST 真实取数，外呼失败
+回退确定性数据保证离线联调可复现）；只读端点不强制登录，自选交易对读写数据库且需登录。
 """
 
 from fastapi import Request
@@ -49,6 +49,7 @@ def _ticker_to_response(ticker: MarketTicker) -> MarketTickerResponseData:
         signal=ticker.signal,
         signalTone=ticker.signal_tone,
         marketType=ticker.market_type,
+        spark=ticker.spark,
     )
 
 
@@ -83,7 +84,7 @@ class ListTickersViewModel(BaseViewModel):
 
     async def before(self) -> None:
         await super().before()
-        tickers = await market_data.list_tickers()
+        tickers = await market_data.list_tickers(with_spark=True)
         if self.market_type and self.market_type != "all":
             tickers = [t for t in tickers if t.market_type == self.market_type]
         self.operating_successfully([_ticker_to_response(t) for t in tickers])
@@ -122,18 +123,22 @@ class ListHeatmapViewModel(BaseViewModel):
 class GetMarketDetailViewModel(BaseViewModel):
     """单币种详情（行情 + K 线 + 订单簿 + 成交流 + AI 快照）。只读，不强制登录。"""
 
-    def __init__(self, request: Request, symbol: str) -> None:
+    def __init__(self, request: Request, symbol: str, timeframe: str = "1h") -> None:
         super().__init__(request=request)
         self.symbol = symbol
+        self.timeframe = timeframe
 
     async def before(self) -> None:
         await super().before()
+        if self.timeframe not in market_data.VALID_CANDLE_INTERVALS:
+            self.illegal_parameters("K 线周期不支持")
+            return
         detail = await market_data.get_ticker_detail(self.symbol)
         if detail is None:
             self.not_found("交易对不存在")
             return
         ticker, snapshot = detail
-        candles = await market_data.build_candles(self.symbol)
+        candles = await market_data.build_candles(self.symbol, interval=self.timeframe)
         order_book = await market_data.get_order_book(self.symbol)
         tape = await market_data.get_trade_tape(self.symbol)
 
@@ -188,7 +193,7 @@ class ListWatchlistViewModel(BaseViewModel):
         ).all()
         result: list[MarketTickerResponseData] = []
         for item in items:
-            ticker = await market_data.get_ticker(item.symbol)
+            ticker = await market_data.get_ticker(item.symbol, with_spark=True)
             if ticker is not None:
                 result.append(_ticker_to_response(ticker))
         self.operating_successfully(result)

@@ -203,6 +203,7 @@ def _build_list_item(
         todayPnlLabel=_format_pnl(today_pnl),
         pnlPositive=today_pnl > 0,
         positions=positions,
+        pairs=bot.pairs,
     )
 
 
@@ -212,7 +213,6 @@ def _build_detail(bot: Bot, exchange_name: str, strategy_name: str) -> BotDetail
         **base,
         exchangeAccountId=bot.exchange_account_id,
         strategyId=bot.strategy_id,
-        pairs=bot.pairs,
         stakeCurrency=bot.stake_currency,
         stakeAmount=bot.stake_amount,
         maxOpenTrades=bot.max_open_trades,
