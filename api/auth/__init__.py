@@ -25,6 +25,7 @@ from view_models.auth import (
     GetCurrentUserViewModel,
     ListUsersViewModel,
     LoginViewModel,
+    LogoutViewModel,
     OAuthExchangeViewModel,
     RefreshTokenViewModel,
     RegisterViewModel,
@@ -111,6 +112,21 @@ async def refresh_token(
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
     return await create_response(RefreshTokenViewModel, request, db, form=form)
+
+
+@router.post(
+    "/auth/logout",
+    response_model=BaseResponseModel[None],
+    summary="登出",
+    description="吊销刷新令牌（Redis 白名单删除 jti），使其立即失效；幂等，令牌无效也返回成功。",
+    tags=["StratArk/认证 Auth"],
+)
+async def logout(
+    request: Request,
+    form: RefreshTokenForm,
+    db: AsyncSession = Depends(get_db),
+) -> BaseResponseModel:
+    return await create_response(LogoutViewModel, request, db, form=form)
 
 
 @router.post(

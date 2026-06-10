@@ -33,7 +33,8 @@ class Settings(BaseSettings):
 
     JWT_SECRET_KEY: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_DAYS: int = 7
+    # access 短 TTL（分钟级，配合前端 silent refresh）；refresh 长 TTL + jti 白名单可吊销。
+    JWT_ACCESS_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_EXPIRE_DAYS: int = 30
     ADMIN_EMAIL_SUFFIXES: str = ""
 
@@ -90,14 +91,10 @@ class Settings(BaseSettings):
     # connection_config.serviceUrl（引擎配置页 UI 管理），不走 env，无需 K8s 集群化配置。
 
     # Stripe 支付（订阅 Checkout + Customer Portal + Webhook；官方 stripe SDK）
-    # 留空 STRIPE_SECRET_KEY 即回退现有 mock 计费流程，应用仍可运行。
-    # 价格 ID 来自 Stripe 控制台（每个套餐 × 计费周期一个 Price）；免费套餐无 Price。
+    # 仅密钥类走 env：STRIPE_SECRET_KEY（拉起支付必须）、STRIPE_WEBHOOK_SECRET（回调验签）。
+    # 套餐元数据与 Stripe 产品 / 价格 ID 均落库（plans 表），由后台「同步到 Stripe」创建并回填。
     STRIPE_SECRET_KEY: str | None = None
     STRIPE_WEBHOOK_SECRET: str | None = None
-    STRIPE_PRICE_PRO_MONTHLY: str | None = None
-    STRIPE_PRICE_PRO_YEARLY: str | None = None
-    STRIPE_PRICE_TEAM_MONTHLY: str | None = None
-    STRIPE_PRICE_TEAM_YEARLY: str | None = None
     # Checkout success/cancel 与 Portal 返回地址基址；留空则取首个 CORS origin。
     FRONTEND_BASE_URL: str | None = None
 

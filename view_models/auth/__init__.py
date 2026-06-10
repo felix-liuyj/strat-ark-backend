@@ -28,6 +28,11 @@ from libs.auth.jwt import (
     decode_refresh_token,
 )
 from libs.auth.permissions import PermissionChecker
+from libs.auth.session import (
+    is_refresh_jti_active,
+    register_refresh_jti,
+    revoke_refresh_jti,
+)
 from libs.custom import render_template
 from libs.email import EmailController
 from libs.integrations.oauth_login import VerifiedOAuthIdentity, exchange_oauth_code
@@ -44,6 +49,7 @@ __all__ = (
     "ChangePasswordViewModel",
     "GetCurrentUserViewModel",
     "LoginViewModel",
+    "LogoutViewModel",
     "OAuthExchangeViewModel",
     "RefreshTokenViewModel",
     "RegisterViewModel",
@@ -79,15 +85,20 @@ def _build_user_profile(user: User) -> UserProfileResponseData:
     )
 
 
-def _build_token_response(user: User) -> AuthTokenResponseData:
+async def _issue_session(user: User) -> AuthTokenResponseData:
+    """统一签发出口：邮箱密码 / 注册 / OAuth / 刷新都走这里。
+
+    access 短 TTL；refresh 携带 jti 并登记 Redis 白名单（rotation + 登出即时吊销的前提）。
+    """
     access_token = create_access_token(
         user_id=str(user.id),
         user_type=user.user_type,
     )
-    refresh_token = create_refresh_token(
+    refresh_token, jti, ttl_seconds = create_refresh_token(
         user_id=str(user.id),
         user_type=user.user_type,
     )
+    await register_refresh_jti(str(user.id), jti, ttl_seconds)
     return AuthTokenResponseData(
         accessToken=access_token,
         refreshToken=refresh_token,
@@ -266,7 +277,7 @@ class RegisterViewModel(BaseViewModel):
         await self.db.commit()
         await self.db.refresh(user)
 
-        self.operating_successfully(_build_token_response(user))
+        self.operating_successfully(await _issue_session(user))
 
 
 class LoginViewModel(BaseViewModel):
@@ -307,7 +318,7 @@ class LoginViewModel(BaseViewModel):
             )
             return
 
-        self.operating_successfully(_build_token_response(user))
+        self.operating_successfully(await _issue_session(user))
 
 
 class OAuthExchangeViewModel(BaseViewModel):
@@ -329,7 +340,7 @@ class OAuthExchangeViewModel(BaseViewModel):
         await self._sync_binding(user, identity)
         await self.db.commit()
         await self.db.refresh(user)
-        self.operating_successfully(_build_token_response(user))
+        self.operating_successfully(await _issue_session(user))
 
     async def _exchange_identity(self) -> VerifiedOAuthIdentity | None:
         try:
@@ -446,7 +457,7 @@ class OAuthExchangeViewModel(BaseViewModel):
 
 
 class RefreshTokenViewModel(BaseViewModel):
-    """刷新 token"""
+    """刷新 token（rotation：旧 jti 校验白名单后立即吊销，签发新对；旧 token 重放即被拦）。"""
 
     def __init__(self, request: Request, db: AsyncSession, form: RefreshTokenForm) -> None:
         super().__init__(request=request)
@@ -462,12 +473,37 @@ class RefreshTokenViewModel(BaseViewModel):
             self.unauthorized(AUTH_INVALID_MESSAGE)
             return
 
+        if not await is_refresh_jti_active(payload.user_id, payload.jti):
+            # 已被 rotation 消费 / 已登出 / 已吊销：拒绝并不再签发。
+            self.unauthorized(AUTH_INVALID_MESSAGE)
+            return
+
         user = await self.db.get(User, int(payload.user_id))
         if user is None or not user.is_active:
             self.unauthorized(AUTH_INVALID_MESSAGE)
             return
 
-        self.operating_successfully(_build_token_response(user))
+        await revoke_refresh_jti(payload.user_id, payload.jti)
+        self.operating_successfully(await _issue_session(user))
+
+
+class LogoutViewModel(BaseViewModel):
+    """登出：吊销 refresh token 的 jti，使其立即失效（access 短 TTL 自然过期）。
+
+    幂等：token 无效 / 已过期 / 已吊销均返回成功，不暴露 token 状态。
+    """
+
+    def __init__(self, request: Request, db: AsyncSession, form: RefreshTokenForm) -> None:
+        super().__init__(request=request)
+        self.form = form
+        self.db = db
+
+    async def before(self) -> None:
+        await super().before()
+        payload = decode_refresh_token(self.form.refreshToken)
+        if payload is not None:
+            await revoke_refresh_jti(payload.user_id, payload.jti)
+        self.operating_successfully()
 
 
 class ResetPasswordViewModel(BaseViewModel):
