@@ -67,6 +67,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     await init_db()
     with suppress(Exception):
         await redis_cache.ping()
+    # Bot 实例守护：状态对账 + 日亏熔断（编排器未配置时每轮静默跳过）。
+    from libs.guardian import start_guardian, stop_guardian
+
+    start_guardian()
     yield
+    await stop_guardian()
     with suppress(Exception):
         await redis_cache.aclose()
