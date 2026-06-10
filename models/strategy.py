@@ -69,6 +69,9 @@ class Strategy(Base, TimestampMixin):
         String(20), nullable=False, default=StrategyStatusEnum.AVAILABLE
     )
     is_builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # freqtrade IStrategy 类名（engines/freqtrade/user_data/strategies/ 下）；
+    # 为空表示策略尚未具备可执行实现，不能用于启动 bot 实例。
+    freqtrade_class: Mapped[str] = mapped_column(String(120), nullable=False, default="")
 
     # 回测指标（展示用文案，回测真实计算属 backtests 域）。
     backtest_return: Mapped[str] = mapped_column(String(40), nullable=False, default="")

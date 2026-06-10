@@ -2,10 +2,16 @@
 
 列表 / 详情 / 创建（向导）/ 更新参数 / 设置 / 删除 / start / stop / restart /
 live-enable（强确认语义）/ trades / positions / logs / AI 摘要 / 风控状态。
-运行模式默认 dry_run；容器编排与运行时数据走 libs.integrations.freqtrade / agent（mock）。
-跨模块名称（交易所账户 / 策略）用 select 查询拼接，不使用 ORM relationship。
+运行模式默认 dry_run。
+
+编排模式：start 经 freqtrade orchestrator 为该 bot 拉起独立实例容器（配置与凭证经
+``FREQTRADE__*`` 环境变量注入，交易所明文凭证仅 live 时解密传递、不落盘）；
+trades / positions / logs 走实例自身 REST。编排器未配置或调用失败返回业务错误，
+无 mock 回退。跨模块名称（交易所账户 / 策略）用 select 查询拼接，不使用 ORM relationship。
 """
 
+import json
+import secrets
 from typing import Any
 
 from fastapi import Request
@@ -14,11 +20,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from forms.bot import BotCreateForm, BotSettingsUpdateForm, BotUpdateForm
 from libs.auth.permissions import PermissionChecker
+from libs.crypto import decrypt_text, encrypt_text
 from libs.integrations import agent as agent_service
 from libs.integrations import freqtrade as freqtrade_service
-from models.bot import Bot, BotRunModeEnum, BotStatusEnum
-from models.exchange import ExchangeAccount
+from libs.integrations.freqtrade import FreqtradeUnavailableError
+from models.account import PlanEnum
+from models.bot import Bot, BotRunModeEnum, BotStatusEnum, BotTradeModeEnum
+from models.engine import EngineKindEnum, get_engine_connection_config
+from models.exchange import ExchangeAccount, ExchangePermissionEnum
+from models.settings import SystemConfig, SystemConfigGroupEnum
 from models.strategy import Strategy
+from models.user import User
 from responses.bot import (
     BotAiSummaryResponseData,
     BotDetailResponseData,
@@ -67,6 +79,102 @@ def _format_pnl(pct: float) -> str:
     return f"{sign}{pct:g}%"
 
 
+_CREDENTIALS_UNAVAILABLE = "交易所凭证不可用，请在交易所账户页重新录入 API Key 与 Secret"
+_INSTANCE_CREDENTIALS_BROKEN = "实例访问凭证不可用，请重新启动机器人"
+
+
+async def _load_orchestrator(db: AsyncSession) -> freqtrade_service.OrchestratorConfig:
+    """读取引擎管理页落库的 freqtrade 编排器配置（单一事实源）。"""
+    return freqtrade_service.resolve_orchestrator_config(
+        await get_engine_connection_config(db, EngineKindEnum.FREQTRADE)
+    )
+
+
+def _instance_ref(bot: Bot) -> str:
+    return f"stratark-bot-{bot.id}"
+
+
+def _instance_credentials(bot: Bot) -> freqtrade_service.InstanceCredentials | None:
+    """还原 bot 实例 REST 访问信息；凭证缺失 / 解密失败返回 None。"""
+    if not bot.api_url or not bot.api_username:
+        return None
+    password = decrypt_text(bot.api_password_cipher)
+    if not password:
+        return None
+    return freqtrade_service.InstanceCredentials(
+        api_url=bot.api_url, username=bot.api_username, password=password
+    )
+
+
+def _parse_pct(value: str) -> float | None:
+    """把 "-6%" / "1.5%" 形式解析为小数比例（-0.06 / 0.015）；不可解析返回 None。"""
+    raw = (value or "").strip().rstrip("%").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw) / 100
+    except ValueError:
+        return None
+
+
+async def _two_factor_state(db: AsyncSession, user_id: int) -> dict:
+    """读取用户 2FA 设置（system_configs general/twoFactor，与 user_center 同源）。"""
+    row = await db.scalar(
+        select(SystemConfig).where(
+            SystemConfig.user_id == user_id,
+            SystemConfig.group == SystemConfigGroupEnum.GENERAL,
+            SystemConfig.key == "twoFactor",
+        )
+    )
+    return dict(row.value) if row is not None and isinstance(row.value, dict) else {}
+
+
+def _build_instance_env(
+    bot: Bot,
+    account: ExchangeAccount,
+    *,
+    exchange_key: str | None,
+    exchange_secret: str | None,
+    api_username: str,
+    api_password: str,
+) -> dict[str, str]:
+    """组装实例容器环境变量（freqtrade 原生 FREQTRADE__ 覆盖机制）。
+
+    交易所明文凭证仅 live 注入；api_server 凭证随实例生成，backend 持有加密副本。
+    """
+    is_live = bot.run_mode == BotRunModeEnum.LIVE
+    env: dict[str, str] = {
+        "FREQTRADE__BOT_NAME": bot.name or _instance_ref(bot),
+        "FREQTRADE__DRY_RUN": "false" if is_live else "true",
+        "FREQTRADE__TRADING_MODE": "futures" if bot.trade_mode == BotTradeModeEnum.FUTURES else "spot",
+        "FREQTRADE__EXCHANGE__NAME": account.provider.value,
+        "FREQTRADE__EXCHANGE__PAIR_WHITELIST": json.dumps(list(bot.pairs or [])),
+        "FREQTRADE__STAKE_CURRENCY": bot.stake_currency,
+        "FREQTRADE__STAKE_AMOUNT": str(bot.stake_amount),
+        "FREQTRADE__MAX_OPEN_TRADES": str(bot.max_open_trades),
+        "FREQTRADE__TIMEFRAME": bot.timeframe,
+        "FREQTRADE__API_SERVER__ENABLED": "true",
+        "FREQTRADE__API_SERVER__LISTEN_IP_ADDRESS": "0.0.0.0",
+        "FREQTRADE__API_SERVER__LISTEN_PORT": "8080",
+        "FREQTRADE__API_SERVER__USERNAME": api_username,
+        "FREQTRADE__API_SERVER__PASSWORD": api_password,
+        "FREQTRADE__API_SERVER__JWT_SECRET_KEY": secrets.token_hex(32),
+    }
+    if bot.trade_mode == BotTradeModeEnum.FUTURES:
+        env["FREQTRADE__MARGIN_MODE"] = "isolated"
+    stoploss = _parse_pct(bot.stoploss)
+    if stoploss is not None:
+        env["FREQTRADE__STOPLOSS"] = str(-abs(stoploss))
+    trailing = _parse_pct(bot.trailing_stop)
+    if trailing is not None and trailing > 0:
+        env["FREQTRADE__TRAILING_STOP"] = "true"
+        env["FREQTRADE__TRAILING_STOP_POSITIVE"] = str(trailing)
+    if is_live and exchange_key and exchange_secret:
+        env["FREQTRADE__EXCHANGE__KEY"] = exchange_key
+        env["FREQTRADE__EXCHANGE__SECRET"] = exchange_secret
+    return env
+
+
 async def _resolve_names(db: AsyncSession, bot: Bot) -> tuple[str, str]:
     """查询交易所账户名与策略名（跨模块仅用 select，不用 relationship）。"""
     exchange = await db.get(ExchangeAccount, bot.exchange_account_id)
@@ -76,9 +184,11 @@ async def _resolve_names(db: AsyncSession, bot: Bot) -> tuple[str, str]:
     return exchange_name, strategy_name
 
 
-def _build_list_item(bot: Bot, exchange_name: str, strategy_name: str) -> BotListItemResponseData:
-    # Dry-run 模式下今日收益示意为正；停止状态显示为 —。
-    today_pnl = 2.3 if bot.status == BotStatusEnum.RUNNING else 0.0
+def _build_list_item(
+    bot: Bot, exchange_name: str, strategy_name: str, *, today_pnl: float = 0.0, positions: int = 0
+) -> BotListItemResponseData:
+    # 列表页轻量化：运行时指标（今日收益 / 持仓数）默认占位 0 / —，
+    # 真实数据在详情页经实例 REST 拉取（列表逐 bot 探实例代价过高）。
     return BotListItemResponseData(
         id=bot.id,
         name=bot.name,
@@ -92,7 +202,7 @@ def _build_list_item(bot: Bot, exchange_name: str, strategy_name: str) -> BotLis
         todayPnlPct=today_pnl,
         todayPnlLabel=_format_pnl(today_pnl),
         pnlPositive=today_pnl > 0,
-        positions=2 if bot.status == BotStatusEnum.RUNNING else 0,
+        positions=positions,
     )
 
 
@@ -343,72 +453,172 @@ class DeleteBotViewModel(_AuthedBotViewModel):
             self.not_found("机器人不存在")
             return
 
-        if bot.status == BotStatusEnum.RUNNING:
-            freqtrade_service.stop_bot(bot.container_ref)
+        if bot.container_ref:
+            orchestrator = await _load_orchestrator(self.db)
+            try:
+                instance = await freqtrade_service.get_instance(orchestrator, bot.container_ref)
+                if instance is not None:
+                    await freqtrade_service.remove_instance(orchestrator, bot.container_ref)
+            except FreqtradeUnavailableError as exc:
+                # 实例可能仍在运行：编排器不可达时拒绝删除，避免泄漏脱管的运行实例。
+                self.operating_failed(f"{exc}；为避免实例脱管，请先恢复编排器后再删除")
+                return
         await self.db.delete(bot)
         await self.db.commit()
         self.operating_successfully()
 
 
 class _BotLifecycleViewModel(_AuthedBotViewModel):
-    """start / stop / restart 共享基类。"""
+    """start / stop / restart 共享基类（经编排器操作实例容器）。"""
 
     def __init__(self, request: Request, db: AsyncSession, checker: PermissionChecker, bot_id: int) -> None:
         super().__init__(request=request, db=db, checker=checker)
         self.bot_id = bot_id
 
-    async def _run(self, op: str) -> None:
+    def _respond(self, bot: Bot, runtime_status: str, message: str) -> None:
+        self.operating_successfully(
+            BotLifecycleResponseData(
+                id=bot.id,
+                status=bot.status,
+                runtimeStatus=runtime_status,
+                containerRef=bot.container_ref,
+                message=message,
+            )
+        )
+
+    async def _check_live_gates(self, bot: Bot, account: ExchangeAccount) -> bool:
+        """live 启动硬门槛：实盘确认 / 套餐 / 2FA / API Key 权限。失败时已写响应。"""
+        if not bot.live_enabled:
+            self.illegal_parameters("请先在 Bot 详情完成实盘开启确认")
+            return False
+        user = await self.db.get(User, int(self.checker.user_id))
+        if user is None or user.plan == PlanEnum.FREE:
+            self.forbidden("免费套餐不支持实盘交易，请升级订阅")
+            return False
+        two_factor = await _two_factor_state(self.db, int(self.checker.user_id))
+        if bool(two_factor.get("requireForLiveActions", True)) and not bool(two_factor.get("totpEnabled", False)):
+            self.operating_failed("实盘操作要求两步验证，请先在用户中心开启 2FA")
+            return False
+        if account.permission == ExchangePermissionEnum.READ_TRADE_WITHDRAW or not account.withdraw_disabled:
+            self.forbidden("该 API Key 含提现权限，禁止用于实盘；请更换为仅交易权限的 Key")
+            return False
+        return True
+
+    async def _start(self, bot: Bot) -> None:
+        orchestrator = await _load_orchestrator(self.db)
+        strategy = await self.db.get(Strategy, bot.strategy_id)
+        if strategy is None or not strategy.freqtrade_class:
+            self.illegal_parameters("该策略暂无可执行实现，无法启动实例")
+            return
+        account = await self.db.get(ExchangeAccount, bot.exchange_account_id)
+        if account is None:
+            self.illegal_parameters("绑定的交易所账户不存在")
+            return
+
+        exchange_key: str | None = None
+        exchange_secret: str | None = None
+        if bot.run_mode == BotRunModeEnum.LIVE:
+            if not await self._check_live_gates(bot, account):
+                return
+            exchange_key = decrypt_text(account.api_key_cipher)
+            exchange_secret = decrypt_text(account.api_secret_cipher)
+            if not exchange_key or not exchange_secret:
+                self.operating_failed(_CREDENTIALS_UNAVAILABLE)
+                return
+
+        # 实例 api_server 凭证随启动重新生成，密码仅以密文留存。
+        api_username = f"bot{bot.id}"
+        api_password = secrets.token_urlsafe(24)
+        env = _build_instance_env(
+            bot,
+            account,
+            exchange_key=exchange_key,
+            exchange_secret=exchange_secret,
+            api_username=api_username,
+            api_password=api_password,
+        )
+        try:
+            info = await freqtrade_service.create_instance(
+                orchestrator, ref=_instance_ref(bot), strategy=strategy.freqtrade_class, env=env
+            )
+        except FreqtradeUnavailableError as exc:
+            self.operating_failed(str(exc))
+            return
+
+        bot.container_ref = info.ref
+        bot.api_url = f"http://{info.ref}:8080"
+        bot.api_username = api_username
+        bot.api_password_cipher = encrypt_text(api_password)
+        bot.status = BotStatusEnum.RUNNING
+        await self.db.commit()
+        self._respond(bot, info.status, f"实例已启动 · {bot.run_mode.value}")
+
+    async def _stop(self, bot: Bot) -> None:
+        orchestrator = await _load_orchestrator(self.db)
+        if bot.container_ref:
+            try:
+                instance = await freqtrade_service.get_instance(orchestrator, bot.container_ref)
+                if instance is not None:
+                    await freqtrade_service.stop_instance(orchestrator, bot.container_ref)
+            except FreqtradeUnavailableError as exc:
+                self.operating_failed(str(exc))
+                return
+        bot.status = BotStatusEnum.STOPPED
+        await self.db.commit()
+        self._respond(bot, "stopped", "实例已停止")
+
+    async def _restart(self, bot: Bot) -> None:
+        orchestrator = await _load_orchestrator(self.db)
+        if not bot.container_ref:
+            self.illegal_parameters("实例尚未创建，请直接启动")
+            return
+        try:
+            info = await freqtrade_service.restart_instance(orchestrator, bot.container_ref)
+        except FreqtradeUnavailableError as exc:
+            self.operating_failed(str(exc))
+            return
+        bot.status = BotStatusEnum.RUNNING
+        await self.db.commit()
+        self._respond(bot, info.status, "实例重启中")
+
+
+class StartBotViewModel(_BotLifecycleViewModel):
+    """启动机器人（编排器拉起独立实例；live 需通过全部硬门槛）。"""
+
+    async def before(self) -> None:
+        await super().before()
         self.checker.require_auth()
         bot = await self._load_owned_bot(self.bot_id)
         if bot is None:
             self.not_found("机器人不存在")
             return
-
-        if op == "start":
-            result = freqtrade_service.start_bot(bot.container_ref, bot.run_mode.value)
-            bot.status = BotStatusEnum.RUNNING
-        elif op == "stop":
-            result = freqtrade_service.stop_bot(bot.container_ref)
-            bot.status = BotStatusEnum.STOPPED
-        else:
-            result = freqtrade_service.restart_bot(bot.container_ref)
-            bot.status = BotStatusEnum.RUNNING
-        bot.container_ref = result.container_id
-        await self.db.commit()
-
-        self.operating_successfully(
-            BotLifecycleResponseData(
-                id=bot.id,
-                status=bot.status,
-                runtimeStatus=result.runtime_status,
-                containerRef=result.container_id,
-                message=result.message,
-            )
-        )
-
-
-class StartBotViewModel(_BotLifecycleViewModel):
-    """启动机器人。"""
-
-    async def before(self) -> None:
-        await super().before()
-        await self._run("start")
+        await self._start(bot)
 
 
 class StopBotViewModel(_BotLifecycleViewModel):
-    """停止机器人。"""
+    """停止机器人（停实例容器，保留以便快速恢复）。"""
 
     async def before(self) -> None:
         await super().before()
-        await self._run("stop")
+        self.checker.require_auth()
+        bot = await self._load_owned_bot(self.bot_id)
+        if bot is None:
+            self.not_found("机器人不存在")
+            return
+        await self._stop(bot)
 
 
 class RestartBotViewModel(_BotLifecycleViewModel):
-    """重启机器人。"""
+    """重启机器人实例。"""
 
     async def before(self) -> None:
         await super().before()
-        await self._run("restart")
+        self.checker.require_auth()
+        bot = await self._load_owned_bot(self.bot_id)
+        if bot is None:
+            self.not_found("机器人不存在")
+            return
+        await self._restart(bot)
 
 
 class EnableBotLiveViewModel(_AuthedBotViewModel):
@@ -426,8 +636,10 @@ class EnableBotLiveViewModel(_AuthedBotViewModel):
             self.not_found("机器人不存在")
             return
 
-        # 强确认语义：标记已提交实盘切换，等待风控与 2FA；金额/下单全为模拟，绝不实际下单转账。
+        # 强确认语义：仅标记实盘授权；真实门槛（套餐 / 2FA / API Key 权限 / 凭证可用）
+        # 在启动实例时逐项校验，任一不满足拒绝启动。
         bot.live_enabled = True
+        bot.run_mode = BotRunModeEnum.LIVE
         await self.db.commit()
         await self.db.refresh(bot)
         self.operating_successfully(
@@ -435,7 +647,7 @@ class EnableBotLiveViewModel(_AuthedBotViewModel):
                 id=bot.id,
                 liveEnabled=bot.live_enabled,
                 runMode=bot.run_mode,
-                message="已提交实盘切换 · 等待风控与 2FA 确认",
+                message="实盘已授权 · 启动时将校验套餐、两步验证与 API Key 权限",
             )
         )
 
@@ -455,7 +667,16 @@ class GetBotTradesViewModel(_AuthedBotViewModel):
             self.not_found("机器人不存在")
             return
 
-        trades = freqtrade_service.fetch_trades(bot.container_ref)
+        # 停机实例无运行数据：返回空列表（非伪造）；运行中实例走真实 REST。
+        creds = _instance_credentials(bot)
+        if bot.status != BotStatusEnum.RUNNING or creds is None:
+            self.operating_successfully([])
+            return
+        try:
+            trades = await freqtrade_service.fetch_trades(creds)
+        except FreqtradeUnavailableError as exc:
+            self.operating_failed(str(exc))
+            return
         self.operating_successfully(
             [
                 BotTradeResponseData(
@@ -490,7 +711,15 @@ class GetBotPositionsViewModel(_AuthedBotViewModel):
             self.not_found("机器人不存在")
             return
 
-        positions = freqtrade_service.fetch_positions(bot.container_ref)
+        creds = _instance_credentials(bot)
+        if bot.status != BotStatusEnum.RUNNING or creds is None:
+            self.operating_successfully([])
+            return
+        try:
+            positions = await freqtrade_service.fetch_positions(creds)
+        except FreqtradeUnavailableError as exc:
+            self.operating_failed(str(exc))
+            return
         self.operating_successfully(
             [
                 BotPositionResponseData(
@@ -532,7 +761,15 @@ class GetBotLogsViewModel(_AuthedBotViewModel):
             self.not_found("机器人不存在")
             return
 
-        entries = freqtrade_service.fetch_logs(bot.container_ref, level=self.level)
+        creds = _instance_credentials(bot)
+        if bot.status != BotStatusEnum.RUNNING or creds is None:
+            self.operating_successfully([])
+            return
+        try:
+            entries = await freqtrade_service.fetch_logs(creds, level=self.level)
+        except FreqtradeUnavailableError as exc:
+            self.operating_failed(str(exc))
+            return
         self.operating_successfully(
             [
                 BotLogEntryResponseData(

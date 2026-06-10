@@ -23,6 +23,7 @@ from models.strategy import Strategy, StrategyRiskEnum, StrategyStatusEnum, Stra
 BUILTIN_STRATEGIES: list[dict] = [
     {
         "name": "Trend EMA RSI V1",
+        "freqtrade_class": "TrendEmaRsiV1",
         "strategy_type": StrategyTypeEnum.TREND,
         "icon": "trend",
         "icon_color": "ico-brand",
@@ -40,6 +41,7 @@ BUILTIN_STRATEGIES: list[dict] = [
     },
     {
         "name": "Mean Reversion BB",
+        "freqtrade_class": "MeanReversionBB",
         "strategy_type": StrategyTypeEnum.MEAN_REVERSION,
         "icon": "range",
         "icon_color": "ico-blue",
@@ -57,6 +59,7 @@ BUILTIN_STRATEGIES: list[dict] = [
     },
     {
         "name": "Donchian Breakout",
+        "freqtrade_class": "DonchianBreakout",
         "strategy_type": StrategyTypeEnum.BREAKOUT,
         "icon": "breakout",
         "icon_color": "ico-green",
@@ -74,6 +77,7 @@ BUILTIN_STRATEGIES: list[dict] = [
     },
     {
         "name": "Risk Guard Overlay",
+        "freqtrade_class": "RiskGuardOverlay",
         "strategy_type": StrategyTypeEnum.RISK_GUARD,
         "icon": "shield",
         "icon_color": "ico-amber",
@@ -99,6 +103,9 @@ async def seed_strategies(db) -> int:
             select(Strategy).where(Strategy.name == spec["name"], Strategy.is_builtin.is_(True))
         )
         if exists is not None:
+            # 存量行补填 freqtrade 类名映射（早期种子无此字段）。
+            if not exists.freqtrade_class and spec.get("freqtrade_class"):
+                exists.freqtrade_class = spec["freqtrade_class"]
             continue
         db.add(Strategy(user_id=None, is_builtin=True, **spec))
         created += 1

@@ -52,20 +52,22 @@ __all__ = (
 )
 
 # 连接 / 部署配置中需要掩码后才能回显的敏感字段。
-_SENSITIVE_CONFIG_KEYS = frozenset({"token", "apiKey", "secret", "restApiToken", "password"})
+_SENSITIVE_CONFIG_KEYS = frozenset(
+    {"token", "apiKey", "secret", "restApiToken", "password", "orchestratorToken"}
+)
 _MASK_VALUE = "***"
 
 # 引擎默认元数据（首次访问时按类型 seed，与前端 data.ts 对齐）。
+# Freqtrade 为编排模式：connection_config 是编排器（per-bot 实例容器）的控制面配置，
+# 不再指向单一 freqtrade 实例。
 _ENGINE_DEFAULTS: dict[EngineKindEnum, dict[str, Any]] = {
     EngineKindEnum.FREQTRADE: {
         "name": "Freqtrade 执行引擎",
         "connection_config": {
-            "serviceUrl": "http://freqtrade-orchestrator.stratark-prod.svc.cluster.local:8080",
-            "healthPath": "/api/v1/ping",
-            "restApiToken": "",
+            "orchestratorUrl": "http://freqtrade-orchestrator:8090",
+            "orchestratorToken": "",
+            "instanceImage": "freqtradeorg/freqtrade:stable",
             "timeout": 30,
-            "retries": 3,
-            "mtls": True,
         },
         "deployment_config": {
             "logLevel": "INFO",
@@ -93,6 +95,12 @@ _ENGINE_DEFAULTS: dict[EngineKindEnum, dict[str, Any]] = {
         },
     },
 }
+
+
+def _service_url(config: dict[str, Any] | None) -> str:
+    """引擎服务探活地址：常规引擎取 serviceUrl，编排模式（freqtrade）取 orchestratorUrl。"""
+    cfg = config or {}
+    return str(cfg.get("serviceUrl") or cfg.get("orchestratorUrl") or "")
 
 
 def _mask_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -206,8 +214,8 @@ class GetEngineMonitorViewModel(_AdminEngineViewModel):
         engine = await self._get_or_seed_engine(self.engine_kind)
 
         key = str(self.engine_kind)
-        # 引擎经服务连接交互：运行状态由 connection_config.serviceUrl 探活派生。
-        service_url = str((engine.connection_config or {}).get("serviceUrl", ""))
+        # 引擎经服务连接交互：运行状态由连接配置的服务地址（编排模式为编排器地址）探活派生。
+        service_url = _service_url(engine.connection_config)
         snapshot = engine_runtime.fetch_runtime_snapshot(key, service_url)
         deps = engine_runtime.fetch_dependencies(key)
         logs = engine_runtime.fetch_logs(key, level=self.log_level)
@@ -390,7 +398,7 @@ class ExecuteEngineOpViewModel(_AdminEngineViewModel):
 
         op_type = self.form.opType
         engine = await self._get_or_seed_engine(self.engine_kind)
-        service_url = str((engine.connection_config or {}).get("serviceUrl", ""))
+        service_url = _service_url(engine.connection_config)
         result = _dispatch_op(op_type, str(self.engine_kind), service_url)
 
         detail: dict[str, Any] = {}

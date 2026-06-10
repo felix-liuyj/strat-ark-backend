@@ -93,4 +93,8 @@ class Bot(Base, TimestampMixin):
 
     # 运行时引用（容器编排），由 start/stop 写入。
     container_ref: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+    # 实例 REST API 访问信息：地址 + 随机生成的 api_server 凭证（密码 Fernet 加密）。
+    api_url: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    api_username: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+    api_password_cipher: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
