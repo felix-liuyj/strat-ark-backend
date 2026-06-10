@@ -254,6 +254,8 @@ async def fetch_trades(creds: InstanceCredentials, limit: int = 50) -> list[Trad
     payload = await _instance_get(creds, "/api/v1/trades", {"limit": limit})
     records: list[TradeRecord] = []
     for row in payload.get("trades", []):
+        if row.get("is_open"):
+            continue  # 未平仓由 fetch_positions（/status）表达，trades 仅历史成交
         opened_at = _parse_dt(row.get("open_date"))
         closed_at = _parse_dt(row.get("close_date"))
         records.append(

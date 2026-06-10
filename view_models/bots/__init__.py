@@ -10,6 +10,7 @@ trades / positions / logs 走实例自身 REST。编排器未配置或调用失�
 无 mock 回退。跨模块名称（交易所账户 / 策略）用 select 查询拼接，不使用 ORM relationship。
 """
 
+import asyncio
 import json
 import secrets
 from typing import Any
@@ -246,7 +247,7 @@ class _AuthedBotViewModel(BaseViewModel):
 
 
 class ListBotsViewModel(_AuthedBotViewModel):
-    """机器人列表（仅本人）。"""
+    """机器人列表（仅本人）。运行中 bot 并发拉实例当日收益 / 持仓数填充，实例不可达降级占位。"""
 
     async def before(self) -> None:
         await super().before()
@@ -256,11 +257,39 @@ class ListBotsViewModel(_AuthedBotViewModel):
                 select(Bot).where(Bot.user_id == int(self.checker.user_id)).order_by(Bot.id.asc())
             )
         ).all()
+        metrics = await self._collect_metrics(bots)
         items: list[BotListItemResponseData] = []
         for bot in bots:
             exchange_name, strategy_name = await _resolve_names(self.db, bot)
-            items.append(_build_list_item(bot, exchange_name, strategy_name))
+            pnl, positions = metrics.get(bot.id, (0.0, 0))
+            items.append(
+                _build_list_item(bot, exchange_name, strategy_name, today_pnl=pnl, positions=positions)
+            )
         self.operating_successfully(items)
+
+    @staticmethod
+    async def _collect_metrics(bots: list[Bot]) -> dict[int, tuple[float, int]]:
+        """并发拉取运行中 bot 的实例当日收益与持仓数；单实例失败降级为占位 (0, 0)。"""
+        targets = [
+            (bot, creds)
+            for bot in bots
+            if bot.status == BotStatusEnum.RUNNING and (creds := _instance_credentials(bot)) is not None
+        ]
+        if not targets:
+            return {}
+
+        async def _one(creds: freqtrade_service.InstanceCredentials) -> tuple[float, int]:
+            pnl, positions = await asyncio.gather(
+                freqtrade_service.fetch_daily_profit_pct(creds),
+                freqtrade_service.fetch_positions(creds),
+            )
+            return pnl, len(positions)
+
+        results = await asyncio.gather(*(_one(c) for _, c in targets), return_exceptions=True)
+        metrics: dict[int, tuple[float, int]] = {}
+        for (bot, _), result in zip(targets, results, strict=True):
+            metrics[bot.id] = result if not isinstance(result, BaseException) else (0.0, 0)
+        return metrics
 
 
 class GetBotDetailViewModel(_AuthedBotViewModel):

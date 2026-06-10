@@ -1,9 +1,11 @@
 """交易记录 API 路由（交易记录 / 持仓 / 订单 / 统计 / 导出）。"""
 
 from fastapi import APIRouter, Depends, Path, Query, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from forms.trade import CancelOrderForm
 from libs.auth.permissions import PermissionChecker, get_permission_checker
+from libs.ctrl.db import get_db
 from libs.response import BaseResponseModel, create_response
 from responses.trade import (
     OpenOrderResponseData,
@@ -39,10 +41,12 @@ async def list_trades(
     status_filter: str = Query("all", description="状态筛选：all/open/closed/profit/loss"),
     bots: str | None = Query(None, description="Bot 名多选，逗号分隔；为空不过滤"),
     checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
     return await create_response(
         ListTradesViewModel,
         request,
+        db,
         checker=checker,
         query=query,
         status_filter=status_filter,
@@ -60,8 +64,9 @@ async def list_trades(
 async def get_trade_stats(
     request: Request,
     checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(TradeStatsViewModel, request, checker=checker)
+    return await create_response(TradeStatsViewModel, request, db, checker=checker)
 
 
 @router.get(
@@ -74,8 +79,9 @@ async def get_trade_stats(
 async def export_trades(
     request: Request,
     checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(ExportTradesViewModel, request, checker=checker)
+    return await create_response(ExportTradesViewModel, request, db, checker=checker)
 
 
 @router.get(
@@ -88,8 +94,9 @@ async def export_trades(
 async def list_positions(
     request: Request,
     checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(ListPositionsViewModel, request, checker=checker)
+    return await create_response(ListPositionsViewModel, request, db, checker=checker)
 
 
 @router.get(
@@ -102,8 +109,9 @@ async def list_positions(
 async def list_open_orders(
     request: Request,
     checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(ListOpenOrdersViewModel, request, checker=checker)
+    return await create_response(ListOpenOrdersViewModel, request, db, checker=checker)
 
 
 @router.post(
@@ -118,5 +126,6 @@ async def cancel_order(
     form: CancelOrderForm,
     order_id: str = Path(..., description="订单引用号"),
     checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(CancelOrderViewModel, request, checker=checker, order_id=order_id)
+    return await create_response(CancelOrderViewModel, request, db, checker=checker, order_id=order_id)
