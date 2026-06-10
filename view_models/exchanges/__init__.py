@@ -17,6 +17,7 @@ from forms.exchange import (
 )
 from libs.auth.permissions import PermissionChecker
 from libs.integrations import exchange as exchange_service
+from models.bot import Bot
 from models.exchange import (
     ExchangeAccount,
     ExchangePermissionEnum,
@@ -256,6 +257,14 @@ class DeleteExchangeAccountViewModel(_AuthedExchangeViewModel):
         account = await self._load_owned_account(self.account_id)
         if account is None:
             self.not_found("交易所账户不存在")
+            return
+
+        # 被 Bot 引用的账户不允许删除（外键 RESTRICT 兜底）：先返回业务错误而非数据库 500。
+        bound_bots = (
+            await self.db.scalars(select(Bot.id).where(Bot.exchange_account_id == account.id).limit(1))
+        ).first()
+        if bound_bots is not None:
+            self.illegal_parameters("该账户仍被交易机器人绑定，请先删除或改绑相关机器人")
             return
 
         was_default = account.is_default

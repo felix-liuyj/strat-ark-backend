@@ -2,7 +2,8 @@
 
 对齐前端 Bots / Bot Detail / Bot Wizard：基本信息、交易模式、运行模式（默认 dry_run）、
 绑定策略与交易所账户、交易对、仓位与执行参数、风控参数、各类开关。
-交易 / 持仓 / 日志为运行时数据，统一由 libs.integrations.freqtrade 提供（mock），不落库。
+交易 / 持仓 / 日志为运行时数据，统一由 libs.integrations.freqtrade 提供（config 驱动接真实引擎，
+未配置时回退拟真数据），不落库。
 """
 
 from enum import StrEnum
@@ -50,10 +51,14 @@ class Bot(Base, TimestampMixin):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    # RESTRICT：被 Bot 引用的交易所账户 / 策略不允许直接删除（删除入口先查引用并返回业务错误，
+    # 数据库层兜底防止越过业务层的删除造成孤儿引用）。
     exchange_account_id: Mapped[int] = mapped_column(
-        ForeignKey("exchange_accounts.id"), index=True, nullable=False
+        ForeignKey("exchange_accounts.id", ondelete="RESTRICT"), index=True, nullable=False
     )
-    strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id"), index=True, nullable=False)
+    strategy_id: Mapped[int] = mapped_column(
+        ForeignKey("strategies.id", ondelete="RESTRICT"), index=True, nullable=False
+    )
 
     name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     trade_mode: Mapped[BotTradeModeEnum] = mapped_column(
