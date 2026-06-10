@@ -33,11 +33,13 @@ from libs.auth.session import (
     register_refresh_jti,
     revoke_refresh_jti,
 )
+from libs.ctrl.cloud.oss import AliCloudOssBucketController
 from libs.custom import render_template
 from libs.email import EmailController
 from libs.integrations.oauth_login import VerifiedOAuthIdentity, exchange_oauth_code
 from libs.response import ResponseStatusCodeEnum
 from libs.sso import AUTH_INVALID_MESSAGE
+from libs.upload_rules import validate_oss_url
 from models.account import UserTypeEnum
 from models.oauth_identity import OAuthIdentity
 from models.user import User
@@ -639,8 +641,29 @@ class UpdateProfileViewModel(BaseViewModel):
             self.unauthorized(AUTH_INVALID_MESSAGE)
             return
 
+        # 头像入库校验：空 → 置空；与现值相同（含 OAuth 第三方头像）→ 保持不动；
+        # 新值必须是当前 OSS Bucket avatars 目录下的对象（经签名直传产生的 publicUrl）。
+        avatar_url = (self.form.avatarUrl or "").strip()
+        new_avatar: str | None = None
+        if avatar_url:
+            if avatar_url == (user.avatar_url or ""):
+                new_avatar = user.avatar_url
+            else:
+                try:
+                    object_path = validate_oss_url(avatar_url, AliCloudOssBucketController().expected_host)
+                    if not object_path.startswith("avatars/"):
+                        raise ValueError("头像必须上传到 avatars 目录")
+                except ValueError as exc:
+                    self.illegal_parameters(str(exc))
+                    return
+                except RuntimeError:
+                    # ALI_OSS_* 未配置时无法校验归属，也不接受任意外部 URL。
+                    self.illegal_parameters("对象存储未配置，暂不支持更换头像")
+                    return
+                new_avatar = avatar_url
+
         user.display_name = display_name
-        user.avatar_url = self.form.avatarUrl
+        user.avatar_url = new_avatar
         await self.db.commit()
         await self.db.refresh(user)
         self.operating_successfully(_build_user_profile(user))

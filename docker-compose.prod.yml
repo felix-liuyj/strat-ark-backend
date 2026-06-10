@@ -49,6 +49,11 @@ services:
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       # Checkout / Portal 回跳的前端公网基址，留空取首个 CORS origin
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-}
+      # 阿里云 OSS（头像等直传上传；留空则上传/换头像功能优雅降级）
+      ALI_OSS_ACCESS_KEY: ${ALI_OSS_ACCESS_KEY:-}
+      ALI_OSS_ACCESS_SECRET: ${ALI_OSS_ACCESS_SECRET:-}
+      ALI_OSS_REGION: ${ALI_OSS_REGION:-}
+      ALI_OSS_BUCKET_NAME: ${ALI_OSS_BUCKET_NAME:-}
     depends_on:
       postgres:
         condition: service_healthy
