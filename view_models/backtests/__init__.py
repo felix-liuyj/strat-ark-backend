@@ -8,6 +8,7 @@ from forms.backtests import BacktestCreateForm
 from libs.auth.permissions import PermissionChecker
 from libs.integrations import backtest_engine, trading_agents
 from models.backtests import BacktestStatusEnum, BacktestTask
+from models.engine import EngineKindEnum, get_engine_connection_config
 from responses.backtests import (
     AgentOpinionData,
     BacktestAiReviewData,
@@ -277,12 +278,16 @@ class ReviewBacktestViewModel(BaseViewModel):
             self.illegal_parameters("回测尚未完成，无法复盘")
             return
 
-        review = trading_agents.review_backtest(
+        gateway = trading_agents.resolve_gateway_config(
+            await get_engine_connection_config(self.db, EngineKindEnum.TRADINGAGENTS)
+        )
+        review = await trading_agents.review_backtest(
             strategy_name=task.strategy_name,
             symbol=task.symbol,
             total_return=task.total_return,
             max_drawdown=task.max_drawdown or 0.0,
             sharpe=task.sharpe or 0.0,
+            gateway=gateway,
         )
         task.ai_review = {
             "verdict": review.verdict,

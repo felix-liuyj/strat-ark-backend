@@ -15,6 +15,7 @@ from libs.auth.permissions import PermissionChecker
 from libs.integrations import trading_agents
 from models.ai import AgentReport, AgentReportTypeEnum
 from models.backtests import BacktestStatusEnum, BacktestTask
+from models.engine import EngineKindEnum, get_engine_connection_config
 from models.signals import Signal
 from responses.ai import AgentOpinionData, AgentReportData, AgentReportSummaryData
 from view_models.common.base import BaseViewModel
@@ -39,6 +40,12 @@ def _serialize_agents(agents: list[trading_agents.AgentOpinion]) -> list[dict[st
         }
         for a in agents
     ]
+
+
+async def _load_gateway(db: AsyncSession) -> trading_agents.GatewayConfig:
+    """LLM 网关配置：管理员经引擎管理页落库的 tradingagents 连接配置优先，env 回退。"""
+    connection_config = await get_engine_connection_config(db, EngineKindEnum.TRADINGAGENTS)
+    return trading_agents.resolve_gateway_config(connection_config)
 
 
 def _build_summary(report: AgentReport) -> AgentReportSummaryData:
@@ -102,7 +109,11 @@ class AnalyzeMarketViewModel(BaseViewModel):
             self.illegal_parameters("交易对不能为空")
             return
 
-        result = await trading_agents.run_market_analysis(symbol=symbol, timeframe=self.form.timeframe.strip() or "1h")
+        result = await trading_agents.run_market_analysis(
+            symbol=symbol,
+            timeframe=self.form.timeframe.strip() or "1h",
+            gateway=await _load_gateway(self.db),
+        )
         report = AgentReport(
             user_id=int(self.checker.user_id),
             report_type=AgentReportTypeEnum.MARKET_ANALYSIS,
@@ -158,6 +169,7 @@ class ReviewSignalViewModel(BaseViewModel):
             direction=signal.direction,
             confidence=signal.confidence,
             risk_level=signal.risk_level,
+            gateway=await _load_gateway(self.db),
         )
         report = AgentReport(
             user_id=int(self.checker.user_id),
@@ -212,6 +224,7 @@ class ReviewBacktestReportViewModel(BaseViewModel):
             total_return=task.total_return,
             max_drawdown=task.max_drawdown or 0.0,
             sharpe=task.sharpe or 0.0,
+            gateway=await _load_gateway(self.db),
         )
         report = AgentReport(
             user_id=int(self.checker.user_id),

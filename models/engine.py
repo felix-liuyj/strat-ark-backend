@@ -9,7 +9,8 @@
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, ForeignKey, Integer, String, Text, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from libs.ctrl.db.sqlalchemy import Base, TimestampMixin
@@ -21,6 +22,7 @@ __all__ = (
     "EngineOpStatusEnum",
     "EngineOpTypeEnum",
     "EngineStatusEnum",
+    "get_engine_connection_config",
 )
 
 
@@ -101,3 +103,12 @@ class EngineOp(Base, TimestampMixin):
     # 操作参数与结果明细（如操作下发时的附加上下文）。
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+async def get_engine_connection_config(db: AsyncSession, kind: EngineKindEnum) -> dict[str, Any] | None:
+    """读取指定引擎的连接配置（管理员经引擎管理页落库）；引擎未注册返回 None。
+
+    供业务域（AI 投研等）取管理员配置的网关 / 服务地址；缺失字段由调用方回退 env。
+    """
+    engine = await db.scalar(select(Engine).where(Engine.engine_kind == kind))
+    return engine.connection_config if engine is not None else None

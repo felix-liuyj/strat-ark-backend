@@ -1,10 +1,14 @@
 """TradingAgents 多智能体投研集成。
 
 编排八类 Agent（Market / Technical / Sentiment / Bull / Bear / Trader / Risk /
-Portfolio）的研报产出：配置了 LLM 网关（``AI_GATEWAY_API_KEY``）时，经 httpx 调用
-网关（provider-neutral：Anthropic Messages / OpenAI 兼容）产出结构化研报；未配置或
-任一步失败时，回退到确定性拟真研报（同输入同输出，保证离线 / 联调可复现）。数值价位
-（入场 / 止损 / 止盈）始终由确定性骨架提供，LLM 仅丰富叙事与多空研判。
+Portfolio）的研报产出：配置了 LLM 网关时，经 httpx 调用网关（provider-neutral：
+Anthropic Messages / OpenAI 兼容）产出结构化研报；未配置或任一步失败时，回退到
+确定性拟真研报（同输入同输出，保证离线 / 联调可复现）。数值价位（入场 / 止损 /
+止盈）始终由确定性骨架提供，LLM 仅丰富叙事与多空研判。
+
+网关配置来源（resolve_gateway_config）：管理员在引擎管理页配置的 tradingagents
+connection_config（gatewayProvider / gatewayEndpoint / gatewayModel / apiKey，落库）
+**优先**，env ``AI_GATEWAY_*`` 仅作部署级回退；调用方（ViewModel）读库后传入。
 
 约定：AI 只产出**辅助决策**结论，绝不直接下单；是否进入实盘由信号状态机 + 风控
 规则约束（见 view_models/signals）。
@@ -28,12 +32,48 @@ __all__ = (
     "AgentOpinion",
     "AgentRoleEnum",
     "BacktestReviewResult",
+    "GatewayConfig",
     "MarketAnalysisResult",
     "SignalReviewResult",
+    "resolve_gateway_config",
     "review_backtest",
     "review_signal",
     "run_market_analysis",
 )
+
+
+@dataclass(slots=True)
+class GatewayConfig:
+    """LLM 网关配置快照（provider / 端点 / 模型 / 密钥）。"""
+
+    provider: str
+    url: str | None
+    model: str
+    api_key: str | None
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.api_key)
+
+
+def resolve_gateway_config(connection_config: dict[str, Any] | None = None) -> GatewayConfig:
+    """合成网关配置：引擎管理页落库的 connection_config 优先，env ``AI_GATEWAY_*`` 回退。
+
+    connection_config 字段（引擎管理页 TradingAgents 连接配置表单）：
+    ``gatewayProvider``（Anthropic / OpenAI / Local，大小写不敏感）、``gatewayEndpoint``、
+    ``gatewayModel``、``apiKey``。逐字段取值：UI 留空的字段回退到对应 env。
+    """
+    settings = get_settings()
+    cc = connection_config or {}
+    provider = str(cc.get("gatewayProvider") or settings.AI_GATEWAY_PROVIDER or "anthropic").strip().lower()
+    if provider == "local":
+        provider = "openai"  # Local 网关按 OpenAI 兼容协议调用
+    return GatewayConfig(
+        provider=provider,
+        url=str(cc.get("gatewayEndpoint") or "").strip() or settings.AI_GATEWAY_URL,
+        model=str(cc.get("gatewayModel") or "").strip() or settings.AI_GATEWAY_MODEL,
+        api_key=str(cc.get("apiKey") or "").strip() or settings.AI_GATEWAY_API_KEY,
+    )
 
 
 class AgentRoleEnum(StrEnum):
@@ -332,11 +372,6 @@ _MARKET_SIGNALS = {"long", "watch", "avoid"}
 _RISK_LEVELS = {"low", "medium", "high"}
 
 
-def _gateway_ready() -> bool:
-    """是否配置了可用的 LLM 网关密钥（未配置即回退确定性研报）。"""
-    return bool(getattr(get_settings(), "AI_GATEWAY_API_KEY", None))
-
-
 def _extract_json(text: str) -> dict[str, Any] | None:
     """从模型文本中截取首个 JSON 对象（容忍 ``` 代码围栏与前后缀）。"""
     start, end = text.find("{"), text.rfind("}")
@@ -349,18 +384,16 @@ def _extract_json(text: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-async def _llm_json(user_prompt: str) -> dict[str, Any] | None:
-    """调用配置的 LLM 网关产出结构化 JSON；未配置或任一步失败返回 None（调用方回退）。"""
-    settings = get_settings()
-    api_key = settings.AI_GATEWAY_API_KEY
-    if not api_key:
+async def _llm_json(user_prompt: str, gateway: GatewayConfig) -> dict[str, Any] | None:
+    """调用 LLM 网关产出结构化 JSON；未配置或任一步失败返回 None（调用方回退）。"""
+    if not gateway.ready:
         return None
-    provider = (settings.AI_GATEWAY_PROVIDER or "anthropic").strip().lower()
-    model = settings.AI_GATEWAY_MODEL
+    api_key = gateway.api_key
+    model = gateway.model
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            if provider == "anthropic":
-                base = (settings.AI_GATEWAY_URL or "https://api.anthropic.com").rstrip("/")
+            if gateway.provider == "anthropic":
+                base = (gateway.url or "https://api.anthropic.com").rstrip("/")
                 url = base if base.endswith("/v1/messages") else f"{base}/v1/messages"
                 resp = await client.post(
                     url,
@@ -380,7 +413,7 @@ async def _llm_json(user_prompt: str) -> dict[str, Any] | None:
                 blocks = resp.json().get("content", [])
                 text = next((b.get("text", "") for b in blocks if b.get("type") == "text"), "")
             else:
-                base = (settings.AI_GATEWAY_URL or "https://api.openai.com").rstrip("/")
+                base = (gateway.url or "https://api.openai.com").rstrip("/")
                 url = base if base.endswith("/chat/completions") else f"{base}/v1/chat/completions"
                 resp = await client.post(
                     url,
@@ -442,10 +475,13 @@ def _coerce_agents(raw: Any, fallback: list[AgentOpinion]) -> list[AgentOpinion]
     return out or fallback
 
 
-async def run_market_analysis(symbol: str, timeframe: str) -> MarketAnalysisResult:
+async def run_market_analysis(
+    symbol: str, timeframe: str, *, gateway: GatewayConfig | None = None
+) -> MarketAnalysisResult:
     """多智能体市场分析：LLM 网关可用时产出真实研报，否则回退确定性研报。"""
+    cfg = gateway or resolve_gateway_config()
     base = _demo_market_analysis(symbol, timeframe)
-    if not _gateway_ready():
+    if not cfg.ready:
         return base
     prompt = (
         f"对交易对 {symbol}（周期 {timeframe}）做多智能体市场研判。"
@@ -456,7 +492,7 @@ async def run_market_analysis(symbol: str, timeframe: str) -> MarketAnalysisResu
         '"agents":[{"role":"market|technical|sentiment|bull|bear|trader|risk|portfolio",'
         '"stance":"短语","summary":"中文","points":["要点"]}]}，agents 需覆盖全部八类角色。'
     )
-    data = await _llm_json(prompt)
+    data = await _llm_json(prompt, cfg)
     if data is None:
         return base
     bull = _as_int(data.get("bullScore"), base.bull_score, 0, 100)
@@ -472,10 +508,13 @@ async def run_market_analysis(symbol: str, timeframe: str) -> MarketAnalysisResu
     return base
 
 
-async def review_signal(symbol: str, direction: str, confidence: float, risk_level: str) -> SignalReviewResult:
+async def review_signal(
+    symbol: str, direction: str, confidence: float, risk_level: str, *, gateway: GatewayConfig | None = None
+) -> SignalReviewResult:
     """信号复核：LLM 网关可用时产出真实复核，否则回退确定性结论。"""
+    cfg = gateway or resolve_gateway_config()
     base = _demo_review_signal(symbol, direction, confidence, risk_level)
-    if not _gateway_ready():
+    if not cfg.ready:
         return base
     prompt = (
         f"对 {symbol} 的 {direction} 信号（置信度 {confidence}，风险 {risk_level}）做多智能体复核。"
@@ -484,7 +523,7 @@ async def review_signal(symbol: str, direction: str, confidence: float, risk_lev
         'sentiment|bull|bear|trader|risk|portfolio","stance":"短语","summary":"中文","points":["要点"]}]}。'
         "复核通过不等于自动下单。"
     )
-    data = await _llm_json(prompt)
+    data = await _llm_json(prompt, cfg)
     if data is None:
         return base
     rec = str(data.get("recommendation", "")).strip().lower()
@@ -503,10 +542,13 @@ async def review_backtest(
     total_return: float,
     max_drawdown: float,
     sharpe: float,
+    *,
+    gateway: GatewayConfig | None = None,
 ) -> BacktestReviewResult:
     """回测复盘：LLM 网关可用时产出真实归因，否则回退确定性结论。"""
+    cfg = gateway or resolve_gateway_config()
     base = _demo_review_backtest(strategy_name, symbol, total_return, max_drawdown, sharpe)
-    if not _gateway_ready():
+    if not cfg.ready:
         return base
     prompt = (
         f"对策略「{strategy_name}」在 {symbol} 的回测做归因复盘："
@@ -515,7 +557,7 @@ async def review_backtest(
         '"suggestion":"中文改进建议","summary":"中文","agents":[{"role":"market|technical|'
         'sentiment|bull|bear|trader|risk|portfolio","stance":"短语","summary":"中文","points":["要点"]}]}。'
     )
-    data = await _llm_json(prompt)
+    data = await _llm_json(prompt, cfg)
     if data is None:
         return base
     base.verdict = str(data.get("verdict", "")).strip() or base.verdict

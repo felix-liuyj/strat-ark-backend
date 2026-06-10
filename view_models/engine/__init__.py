@@ -82,6 +82,7 @@ _ENGINE_DEFAULTS: dict[EngineKindEnum, dict[str, Any]] = {
             "timeout": 60,
             "gatewayProvider": "Anthropic",
             "gatewayEndpoint": "https://api.anthropic.com",
+            "gatewayModel": "claude-opus-4-8",
             "apiKey": "",
         },
         "deployment_config": {
