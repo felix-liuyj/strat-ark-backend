@@ -14,9 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from forms.user_center import BindOAuthForm, CreateApiKeyForm, UpdateTwoFactorForm
 from libs.auth.permissions import PermissionChecker
+from libs.crypto import decrypt_text, encrypt_text
 from libs.integrations.oauth import simulate_bind
+from libs.totp import generate_secret, provisioning_uri, verify_code
 from models.audit_log import ActorTypeEnum, AuditActionEnum, AuditCategoryEnum
 from models.settings import SystemConfig, SystemConfigGroupEnum
+from models.user import User
 from models.user_center import (
     OAuthBinding,
     OAuthProviderEnum,
@@ -28,6 +31,7 @@ from responses.user_center import (
     ApiKeyResponseData,
     OAuthBindingResponseData,
     TwoFactorResponseData,
+    TwoFactorSetupResponseData,
     UserSessionResponseData,
 )
 from view_models.common.base import BaseViewModel
@@ -42,6 +46,7 @@ __all__ = (
     "LogoutAllSessionsViewModel",
     "LogoutSessionViewModel",
     "RevokeApiKeyViewModel",
+    "SetupTwoFactorViewModel",
     "UnbindOAuthViewModel",
     "UpdateTwoFactorViewModel",
 )
@@ -472,10 +477,44 @@ class GetTwoFactorViewModel(BaseViewModel):
         self.checker.require_auth()
 
         state = await _load_two_factor(self.db, int(self.checker.user_id))
+        self.operating_successfully(_build_two_factor(state))
+
+
+class SetupTwoFactorViewModel(BaseViewModel):
+    """开始 TOTP 绑定：生成 secret（加密暂存为 pending）并返回 otpauth 绑定信息。
+
+    不改变 totpEnabled——需再调 PUT /user/two-factor 携带验证码确认后才真正启用。
+    """
+
+    audit_action = AuditActionEnum.UPDATE
+    audit_resource = "two_factor"
+    audit_enabled = True
+
+    def __init__(self, request: Request, db: AsyncSession, checker: PermissionChecker) -> None:
+        super().__init__(request=request)
+        self.checker = checker
+        self.db = db
+
+    async def before(self) -> None:
+        await super().before()
+        self.checker.require_auth()
+        user_id = int(self.checker.user_id)
+
+        user = await self.db.get(User, user_id)
+        if user is None:
+            self.unauthorized()
+            return
+
+        secret = generate_secret()
+        state = await _load_two_factor(self.db, user_id)
+        state["pendingSecretCipher"] = encrypt_text(secret)
+        await _save_two_factor(self.db, user_id, state)
+
+        _configure_uc_audit(self, user_id, "发起两步验证绑定", AuditActionEnum.UPDATE)
         self.operating_successfully(
-            TwoFactorResponseData(
-                totpEnabled=bool(state.get("totpEnabled", False)),
-                requireForLiveActions=bool(state.get("requireForLiveActions", True)),
+            TwoFactorSetupResponseData(
+                secret=secret,
+                otpauthUri=provisioning_uri(secret, user.email),
             )
         )
 
@@ -504,37 +543,37 @@ class UpdateTwoFactorViewModel(BaseViewModel):
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
 
-        value = {
-            "totpEnabled": self.form.totpEnabled,
-            "requireForLiveActions": self.form.requireForLiveActions,
-        }
-        row = await self.db.scalar(
-            select(SystemConfig).where(
-                SystemConfig.user_id == user_id,
-                SystemConfig.group == SystemConfigGroupEnum.GENERAL,
-                SystemConfig.key == _TWO_FACTOR_KEY,
-            )
-        )
-        if row is None:
-            self.db.add(
-                SystemConfig(
-                    user_id=user_id,
-                    group=SystemConfigGroupEnum.GENERAL,
-                    key=_TWO_FACTOR_KEY,
-                    value=value,
-                )
-            )
-        else:
-            row.value = value
-        await self.db.commit()
+        state = await _load_two_factor(self.db, user_id)
+        currently_enabled = bool(state.get("totpEnabled") and state.get("secretCipher"))
+
+        if self.form.totpEnabled and not currently_enabled:
+            # 开启：用 setup 暂存的 pending secret 校验验证码，通过才转正。
+            pending = decrypt_text(state.get("pendingSecretCipher"))
+            if not pending:
+                self.illegal_parameters("请先获取绑定二维码（/user/two-factor/setup）")
+                return
+            if not verify_code(pending, self.form.totpCode or ""):
+                self.illegal_parameters("验证码错误或已过期，请重新输入")
+                return
+            state["secretCipher"] = encrypt_text(pending)
+            state["pendingSecretCipher"] = None
+            state["totpEnabled"] = True
+        elif not self.form.totpEnabled and currently_enabled:
+            # 关闭：用当前 active secret 校验验证码，防止他人在已登录会话中擅自关闭。
+            active = decrypt_text(state.get("secretCipher"))
+            if not active or not verify_code(active, self.form.totpCode or ""):
+                self.illegal_parameters("关闭两步验证需输入当前验证码")
+                return
+            state["secretCipher"] = None
+            state["pendingSecretCipher"] = None
+            state["totpEnabled"] = False
+
+        # requireForLiveActions 可独立调整（不涉及密钥校验）。
+        state["requireForLiveActions"] = self.form.requireForLiveActions
+        await _save_two_factor(self.db, user_id, state)
 
         _configure_uc_audit(self, user_id, "更新两步验证设置", AuditActionEnum.UPDATE)
-        self.operating_successfully(
-            TwoFactorResponseData(
-                totpEnabled=value["totpEnabled"],
-                requireForLiveActions=value["requireForLiveActions"],
-            )
-        )
+        self.operating_successfully(_build_two_factor(state))
 
 
 async def _load_two_factor(db: AsyncSession, user_id: int) -> dict:
@@ -546,6 +585,35 @@ async def _load_two_factor(db: AsyncSession, user_id: int) -> dict:
         )
     )
     return dict(row.value) if row else {}
+
+
+async def _save_two_factor(db: AsyncSession, user_id: int, value: dict) -> None:
+    row = await db.scalar(
+        select(SystemConfig).where(
+            SystemConfig.user_id == user_id,
+            SystemConfig.group == SystemConfigGroupEnum.GENERAL,
+            SystemConfig.key == _TWO_FACTOR_KEY,
+        )
+    )
+    if row is None:
+        db.add(
+            SystemConfig(
+                user_id=user_id, group=SystemConfigGroupEnum.GENERAL, key=_TWO_FACTOR_KEY, value=value
+            )
+        )
+    else:
+        # JSON 列需整体重新赋值触发脏标记（就地改 dict 不会被 ORM 检测）。
+        row.value = dict(value)
+    await db.commit()
+
+
+def _build_two_factor(state: dict) -> TwoFactorResponseData:
+    """从存储状态构造响应；secret 密文绝不外泄，totpEnabled 以 active secret 是否存在为准。"""
+    return TwoFactorResponseData(
+        totpEnabled=bool(state.get("totpEnabled") and state.get("secretCipher")),
+        requireForLiveActions=bool(state.get("requireForLiveActions", True)),
+        pendingSetup=bool(state.get("pendingSecretCipher")),
+    )
 
 
 def _configure_uc_audit(

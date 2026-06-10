@@ -13,12 +13,14 @@ from responses.user_center import (
     ApiKeyResponseData,
     OAuthBindingResponseData,
     TwoFactorResponseData,
+    TwoFactorSetupResponseData,
     UserSessionResponseData,
 )
 from view_models.user_center import (
     BindOAuthViewModel,
     CreateApiKeyViewModel,
     GetTwoFactorViewModel,
+    SetupTwoFactorViewModel,
     ListApiKeysViewModel,
     ListOAuthBindingsViewModel,
     ListSessionsViewModel,
@@ -191,11 +193,27 @@ async def get_two_factor(
     return await create_response(GetTwoFactorViewModel, request, db, checker=checker)
 
 
+@router.post(
+    "/user/two-factor/setup",
+    response_model=BaseResponseModel[TwoFactorSetupResponseData],
+    summary="发起 TOTP 绑定",
+    description="生成 TOTP secret 并返回 otpauth 绑定信息（扫码 / 手输录入 Authenticator）；"
+    "需再调 PUT /user/two-factor 携带验证码确认后才真正启用。",
+    tags=["StratArk/用户中心"],
+)
+async def setup_two_factor(
+    request: Request,
+    checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
+) -> BaseResponseModel:
+    return await create_response(SetupTwoFactorViewModel, request, db, checker=checker)
+
+
 @router.put(
     "/user/two-factor",
     response_model=BaseResponseModel[TwoFactorResponseData],
     summary="更新两步验证设置",
-    description="更新 2FA（TOTP）开关与实盘操作是否要求 2FA。",
+    description="开启 / 关闭 TOTP（须携带验证码校验）或调整实盘操作是否要求 2FA。",
     tags=["StratArk/用户中心"],
 )
 async def update_two_factor(

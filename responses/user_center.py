@@ -13,6 +13,7 @@ __all__ = (
     "ApiKeyResponseData",
     "OAuthBindingResponseData",
     "TwoFactorResponseData",
+    "TwoFactorSetupResponseData",
     "UserSessionResponseData",
 )
 
@@ -66,5 +67,13 @@ class UserSessionResponseData(ApiResponseModel):
 class TwoFactorResponseData(ApiResponseModel):
     """两步验证（2FA）状态。"""
 
-    totpEnabled: bool = Field(..., description="TOTP 是否开启")
+    totpEnabled: bool = Field(..., description="TOTP 是否开启（已绑定并校验通过）")
     requireForLiveActions: bool = Field(..., description="实盘操作是否要求 2FA")
+    pendingSetup: bool = Field(False, description="是否有待确认的绑定（已 setup 未提交验证码）")
+
+
+class TwoFactorSetupResponseData(ApiResponseModel):
+    """TOTP 绑定信息：secret 仅本次返回供录入 Authenticator，确认开启前不持久化为已启用。"""
+
+    secret: str = Field(..., description="base32 secret（手动录入备用）")
+    otpauthUri: str = Field(..., description="otpauth:// URI（Authenticator 扫码绑定）")

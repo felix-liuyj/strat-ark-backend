@@ -36,9 +36,12 @@ class BindOAuthForm(ApiFormModel):
 
 
 class UpdateTwoFactorForm(ApiFormModel):
-    """更新两步验证（2FA）开关。"""
+    """更新两步验证（2FA）。
+
+    开启 / 关闭 TOTP 必须携带 totpCode（用当前绑定的 secret 校验通过才生效，先经
+    /user/two-factor/setup 获取绑定二维码）；仅调整 requireForLiveActions 时 totpCode 可省略。
+    """
 
     totpEnabled: bool = Body(..., embed=True, description="身份验证器 App (TOTP) 是否开启")
-    requireForLiveActions: bool = Body(
-        True, embed=True, description="实盘操作是否要求 2FA"
-    )
+    requireForLiveActions: bool = Body(True, embed=True, description="实盘操作是否要求 2FA")
+    totpCode: str | None = Body(None, embed=True, description="6 位 TOTP 验证码（开启 / 关闭时必填）")

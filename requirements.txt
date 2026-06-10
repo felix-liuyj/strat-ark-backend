@@ -28,6 +28,7 @@ psycopg==3.3.4
 psycopg-binary==3.3.4
 pycparser==3.0
 pycryptodome==3.23.0
+pyotp>=2.9.0
 pydantic==2.13.4
 pydantic-settings==2.14.1
 pydantic_core==2.46.4

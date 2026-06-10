@@ -26,6 +26,7 @@ dependencies = [
     "pyjwt",
     "cryptography",
     "bcrypt",
+    "pyotp",
     # 缓存
     "redis",
     # 异步邮件
