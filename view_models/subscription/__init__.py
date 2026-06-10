@@ -691,12 +691,16 @@ class StripeWebhookViewModel(BaseViewModel):
             event = billing.construct_webhook_event(self.payload, self.sig_header)
         except Exception as exc:
             logger.warning(f"stripe webhook 验签失败: {exc}")
-            self.illegal_parameters("Webhook 验签失败")
+            self.illegal_parameters("Webhook 验签失败")  # 路由层映射为 HTTP 400：密钥配错时 Stripe 侧可见失败
             return
         try:
             await self._dispatch(event)
-        except Exception as exc:  # 处理异常仅记录、仍返回成功，避免向 Stripe 触发无谓重试风暴。
+        except Exception as exc:
+            # 路由层映射为 HTTP 500，交给 Stripe 指数退避重试自愈瞬态故障；
+            # 会话随请求回滚，处理器重放安全（checkout 全或无、发票按 invoice_no 去重）。
             logger.error(f"stripe webhook 处理异常: {exc}")
+            self.system_error("Webhook 处理失败")
+            return
         self.operating_successfully({"received": True})
 
     async def _dispatch(self, event: Any) -> None:
@@ -750,6 +754,10 @@ class StripeWebhookViewModel(BaseViewModel):
             return
         user = await self.db.get(User, local.user_id)
         period_end = sub.get("current_period_end")
+        if not period_end:
+            # API 2025-03-31.basil 起该字段从 Subscription 顶层移至 items.data[].current_period_end
+            items = (sub.get("items") or {}).get("data") or []
+            period_end = items[0].get("current_period_end") if items else None
         if period_end:
             local.current_period_end = datetime.fromtimestamp(int(period_end), UTC)
         status = str(sub.get("status") or "")

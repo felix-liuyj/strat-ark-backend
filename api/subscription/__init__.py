@@ -1,12 +1,12 @@
 """订阅域 API 路由：套餐目录 / 当前订阅 / 用量 / 账单 / Stripe Checkout / 客户门户 / Webhook / 后台套餐管理。"""
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from forms.subscription import ChangePlanForm, PlanUpdateForm
 from libs.auth.permissions import PermissionChecker, get_permission_checker
 from libs.ctrl.db import get_db
-from libs.response import BaseResponseModel, create_response
+from libs.response import BaseResponseModel, ResponseStatusCodeEnum, create_response
 from models.account import PlanEnum
 from responses.subscription import (
     CheckoutResponseData,
@@ -215,15 +215,23 @@ async def sync_plan_to_stripe(
     response_model=BaseResponseModel[dict],
     summary="Stripe Webhook 回调",
     description="接收 Stripe 事件（checkout.session.completed / customer.subscription.* / invoice.paid）。"
-    "公开端点，仅靠 Stripe-Signature 验签鉴别；在 Stripe 控制台注册指向本路径。",
+    "公开端点，仅靠 Stripe-Signature 验签鉴别；在 Stripe 控制台注册指向本路径。"
+    "对外契约由 Stripe 定义：验签失败回 HTTP 400，处理失败回 HTTP 500 触发 Stripe 重试。",
     tags=["StratArk/订阅计费"],
 )
 async def stripe_webhook(
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature", "")
-    return await create_response(
+    result = await create_response(
         StripeWebhookViewModel, request, db, payload=payload, sig_header=sig_header
     )
+    # Stripe 只认 HTTP 状态码（2xx=已投递不重试），业务码壳对它不可见，须映射为真实状态
+    if result.code == ResponseStatusCodeEnum.ILLEGAL_PARAMETERS:
+        response.status_code = 400
+    elif result.code == ResponseStatusCodeEnum.SYSTEM_ERROR:
+        response.status_code = 500
+    return result
