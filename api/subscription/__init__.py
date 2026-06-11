@@ -118,7 +118,10 @@ async def create_checkout(
     "/subscription/portal",
     response_model=BaseResponseModel[PortalResponseData],
     summary="打开 Stripe 客户门户",
-    description="创建 Stripe Customer Portal 会话并返回跳转 URL，用于管理订阅 / 支付方式 / 发票。需已启用 Stripe 且账户已有 Stripe 客户。",
+    description=(
+        "创建 Stripe Customer Portal 会话并返回跳转 URL，用于管理订阅 / 支付方式 / 发票。"
+        "需已启用 Stripe 且账户已有 Stripe 客户。"
+    ),
     tags=["StratArk/订阅计费"],
 )
 async def create_portal(

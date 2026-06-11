@@ -1,6 +1,6 @@
 """AI 投研 ViewModel（agent_reports）。
 
-调 TradingAgents 多智能体 stub 产出结构化研报并落库；八类 Agent 协作。
+调 TradingAgents 多智能体网关产出结构化研报并落库；八类 Agent 协作。
 AI 仅产出辅助决策结论，不直接下单。
 """
 
@@ -86,7 +86,7 @@ def _build_report(report: AgentReport) -> AgentReportData:
 
 
 class AnalyzeMarketViewModel(BaseViewModel):
-    """市场分析：调多智能体 stub 输出结构化报告并落库。"""
+    """市场分析：调多智能体网关输出结构化报告并落库。"""
 
     def __init__(
         self,
@@ -145,7 +145,7 @@ class AnalyzeMarketViewModel(BaseViewModel):
 
 
 class ReviewSignalViewModel(BaseViewModel):
-    """信号复核：对指定信号调多智能体 stub 复核并落库。"""
+    """信号复核：对指定信号调多智能体网关复核并落库。"""
 
     def __init__(
         self,
@@ -200,7 +200,7 @@ class ReviewSignalViewModel(BaseViewModel):
 
 
 class ReviewBacktestReportViewModel(BaseViewModel):
-    """回测复盘：对指定回测任务调多智能体 stub 复盘并落库。"""
+    """回测复盘：对指定回测任务调多智能体网关复盘并落库。"""
 
     def __init__(
         self,

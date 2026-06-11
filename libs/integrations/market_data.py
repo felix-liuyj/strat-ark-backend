@@ -1,8 +1,8 @@
 """交易所行情数据集成。
 
 默认对接公共行情 REST（Binance 现货 ticker / K 线 / 订单簿 / 成交流，无需密钥；
-市场总览取 CoinGecko global + alternative.me 恐惧贪婪指数）。所有外呼经 httpx 异步，
-任一请求失败（离线 / 限流 / 区域封锁）即回退到确定性拟真数据，保证联调与离线可用。
+市场总览取 CoinGecko global + alternative.me 恐惧贪婪指数）。所有外呼经 httpx 异步；
+任一请求失败时返回空集合或不可用字段，不再回退演示行情。
 REST base 可经 ``MARKET_DATA_REST_URL`` 覆盖（指向自建代理 / 镜像）。ViewModel 只调用
 这里的 async 函数，不接触交易所协议细节。
 """
@@ -244,122 +244,7 @@ async def _get_json(url: str, params: dict[str, Any] | None = None) -> Any:
         return response.json()
 
 
-# ============================ 确定性回退数据 ============================
-
-
-class _Rng:
-    """线性同余随机数发生器，与前端蜡烛图生成算法一致。"""
-
-    def __init__(self, seed: int) -> None:
-        self._seed = seed
-
-    def next(self) -> float:
-        self._seed = (self._seed * 9301 + 49297) % 233280
-        return self._seed / 233280
-
-
-def _seed_of(symbol: str) -> int:
-    return sum(ord(ch) for ch in symbol) % 9973 + 7
-
-
-_FALLBACK_ROWS: dict[str, tuple[float, float, float]] = {
-    "BTC/USDT": (68610.0, 1.42, 32.4e9),
-    "ETH/USDT": (3512.0, 1.86, 14.1e9),
-    "SOL/USDT": (172.40, 8.61, 6.8e9),
-    "BNB/USDT": (604.2, -0.42, 1.9e9),
-    "XRP/USDT": (0.5240, 2.11, 2.2e9),
-    "AVAX/USDT": (38.20, 6.1, 0.9e9),
-    "DOGE/USDT": (0.1420, -5.3, 1.1e9),
-    "LINK/USDT": (18.90, 4.7, 0.6e9),
-}
-
-
-def _demo_ticker(symbol: str) -> MarketTicker | None:
-    row = _FALLBACK_ROWS.get(symbol.upper())
-    if row is None:
-        return None
-    price, pct, vol = row
-    base, quote = _split_symbol(symbol)
-    signal, tone = _signal_for(pct)
-    return MarketTicker(symbol.upper(), base, quote, price, pct, vol, signal, tone, "spot")
-
-
-def _demo_tickers() -> list[MarketTicker]:
-    return [t for sym, _, _ in _UNIVERSE if (t := _demo_ticker(sym)) is not None]
-
-
-def _demo_candles(symbol: str, count: int, interval: str = "1h") -> list[Candle]:
-    rng = _Rng(_seed_of(symbol))
-    ref = _demo_ticker(symbol)
-    price = ref.price if ref else 132.0
-    step = _INTERVAL_STEP.get(interval, _INTERVAL_STEP["1h"])
-    now = datetime.now(UTC)
-    candles: list[Candle] = []
-    for i in range(count):
-        open_ = price
-        close = open_ + (rng.next() - 0.42) * (price * 0.012)
-        high = max(open_, close) + rng.next() * (price * 0.006)
-        low = min(open_, close) - rng.next() * (price * 0.006)
-        volume = rng.next() * 1800 + 200
-        ts = int((now - step * (count - i)).timestamp())
-        candles.append(Candle(ts=ts, open_=open_, high=high, low=low, close=close, volume=volume))
-        price = close
-    return candles
-
-
-def _demo_spark(symbol: str, points: int = _SPARK_POINTS) -> list[float]:
-    """确定性 7D 走势回退（按日线 demo K 线收盘价取样，离线联调可复现）。"""
-    return [round(c.close, 4) for c in _demo_candles(symbol, points, interval="1d")]
-
-
-def _demo_order_book(symbol: str, depth: int) -> OrderBookSnapshot:
-    rng = _Rng(_seed_of(symbol) + 3)
-    ref = _demo_ticker(symbol)
-    mid = ref.price if ref else 68610.0
-
-    def _side(is_ask: bool) -> list[OrderBookLevel]:
-        price = mid
-        cumulative = 0.0
-        levels: list[OrderBookLevel] = []
-        for _ in range(depth):
-            price += (1 if is_ask else -1) * (4 + round(rng.next() * 8))
-            amount = rng.next() * 1.8 + 0.05
-            cumulative += amount
-            levels.append(OrderBookLevel(price=price, amount=amount, total=cumulative))
-        return list(reversed(levels)) if is_ask else levels
-
-    return OrderBookSnapshot(asks=_side(True), bids=_side(False), mid_price=mid, bid_ratio=0.53)
-
-
-def _demo_trade_tape(symbol: str, count: int) -> list[TradeTick]:
-    rng = _Rng(_seed_of(symbol) + 5)
-    ref = _demo_ticker(symbol)
-    price = ref.price if ref else 68610.0
-    now = datetime.now(UTC)
-    ticks: list[TradeTick] = []
-    for i in range(count):
-        is_buy = rng.next() > 0.45
-        price += (1 if is_buy else -1) * round(rng.next() * 6)
-        amount = round(rng.next() * 0.6 + 0.002, 3)
-        ts = int((now - timedelta(seconds=count - i)).timestamp())
-        ticks.append(TradeTick(price=price, amount=amount, ts=ts, is_buy=is_buy))
-    return ticks
-
-
-def _demo_overview() -> MarketOverview:
-    return MarketOverview(
-        total_market_cap="$2.38T",
-        total_market_cap_change_pct=1.8,
-        volume_24h="$98.2B",
-        volume_24h_change_pct=-4.1,
-        btc_dominance=54.2,
-        btc_dominance_change_pct=0.3,
-        fear_greed=62,
-        fear_greed_label="market.greed",
-    )
-
-
-# ============================ 真实实现（失败回退 demo） ============================
+# ============================ 真实实现 ============================
 
 
 def _ticker_from_binance(symbol: str, base: str, quote: str, row: dict[str, Any]) -> MarketTicker:
@@ -371,35 +256,35 @@ def _ticker_from_binance(symbol: str, base: str, quote: str, row: dict[str, Any]
 
 
 async def _attach_sparks(tickers: list[MarketTicker]) -> None:
-    """并发为一组 ticker 填充 7D 走势（单个失败仅影响该 ticker，回退确定性序列）。"""
+    """并发为一组 ticker 填充 7D 走势。"""
     sparks = await asyncio.gather(*(build_spark(t.symbol) for t in tickers))
-    for ticker, spark in zip(tickers, sparks):
+    for ticker, spark in zip(tickers, sparks, strict=True):
         ticker.spark = spark
 
 
 async def list_tickers(with_spark: bool = False) -> list[MarketTicker]:
-    """自选行情全表（Binance 24h ticker，失败回退 demo）。``with_spark`` 时附带 7D 走势。"""
+    """自选行情全表（Binance 24h ticker）。``with_spark`` 时附带 7D 走势。"""
     symbols = [_exchange_symbol(sym) for sym, _, _ in _UNIVERSE]
     try:
         import json
 
         rows = await _get_json(f"{_rest_base()}/api/v3/ticker/24hr", {"symbols": json.dumps(symbols)})
         by_symbol = {str(r.get("symbol")): r for r in rows} if isinstance(rows, list) else {}
-        out: list[MarketTicker] = []
-        for sym, base, quote in _UNIVERSE:
-            row = by_symbol.get(_exchange_symbol(sym))
-            out.append(_ticker_from_binance(sym, base, quote, row) if row else _demo_ticker(sym))
-        tickers = [t for t in out if t is not None]
+        tickers = [
+            _ticker_from_binance(sym, base, quote, row)
+            for sym, base, quote in _UNIVERSE
+            if (row := by_symbol.get(_exchange_symbol(sym))) is not None
+        ]
     except Exception as exc:
-        logger.warning(f"market_data.list_tickers fallback to demo: {exc}")
-        tickers = _demo_tickers()
+        logger.warning(f"market_data.list_tickers failed: {exc}")
+        tickers = []
     if with_spark:
         await _attach_sparks(tickers)
     return tickers
 
 
 async def get_ticker(symbol: str, with_spark: bool = False) -> MarketTicker | None:
-    """按交易对返回单条行情（Binance，失败回退 demo）。``with_spark`` 时附带 7D 走势。"""
+    """按交易对返回单条行情（Binance）。``with_spark`` 时附带 7D 走势。"""
     base, quote = _split_symbol(symbol)
     canonical = f"{base}/{quote}"
     try:
@@ -407,10 +292,10 @@ async def get_ticker(symbol: str, with_spark: bool = False) -> MarketTicker | No
         if isinstance(row, dict) and row.get("lastPrice") is not None:
             ticker = _ticker_from_binance(canonical, base, quote, row)
         else:
-            ticker = _demo_ticker(canonical)
+            ticker = None
     except Exception as exc:
-        logger.warning(f"market_data.get_ticker fallback to demo: {exc}")
-        ticker = _demo_ticker(canonical)
+        logger.warning(f"market_data.get_ticker failed: {exc}")
+        ticker = None
     if ticker is not None and with_spark:
         ticker.spark = await build_spark(canonical)
     return ticker
@@ -421,7 +306,7 @@ def _normalize_interval(interval: str) -> str:
 
 
 async def build_candles(symbol: str, count: int = 44, interval: str = "1h") -> list[Candle]:
-    """K 线序列（Binance klines，周期见 ``VALID_CANDLE_INTERVALS``，失败回退 demo）。"""
+    """K 线序列（Binance klines，周期见 ``VALID_CANDLE_INTERVALS``）。"""
     interval = _normalize_interval(interval)
     try:
         rows = await _get_json(
@@ -429,7 +314,7 @@ async def build_candles(symbol: str, count: int = 44, interval: str = "1h") -> l
             {"symbol": _exchange_symbol(symbol), "interval": interval, "limit": count},
         )
         if not isinstance(rows, list) or not rows:
-            return _demo_candles(symbol, count, interval)
+            return []
         return [
             Candle(
                 ts=int(k[0] // 1000),
@@ -442,27 +327,27 @@ async def build_candles(symbol: str, count: int = 44, interval: str = "1h") -> l
             for k in rows
         ]
     except Exception as exc:
-        logger.warning(f"market_data.build_candles fallback to demo: {exc}")
-        return _demo_candles(symbol, count, interval)
+        logger.warning(f"market_data.build_candles failed: {exc}")
+        return []
 
 
 async def build_spark(symbol: str, points: int = _SPARK_POINTS) -> list[float]:
-    """7D 走势序列（Binance 日线收盘价，失败回退确定性序列）。"""
+    """7D 走势序列（Binance 日线收盘价）。"""
     try:
         rows = await _get_json(
             f"{_rest_base()}/api/v3/klines",
             {"symbol": _exchange_symbol(symbol), "interval": "1d", "limit": points},
         )
         if not isinstance(rows, list) or not rows:
-            return _demo_spark(symbol, points)
+            return []
         return [round(float(k[4]), 4) for k in rows]
     except Exception as exc:
-        logger.warning(f"market_data.build_spark fallback to demo: {exc}")
-        return _demo_spark(symbol, points)
+        logger.warning(f"market_data.build_spark failed: {exc}")
+        return []
 
 
 async def get_order_book(symbol: str, depth: int = 9) -> OrderBookSnapshot:
-    """订单簿快照（Binance depth，失败回退 demo）。"""
+    """订单簿快照（Binance depth）。"""
     try:
         data = await _get_json(
             f"{_rest_base()}/api/v3/depth", {"symbol": _exchange_symbol(symbol), "limit": max(depth, 5)}
@@ -470,7 +355,7 @@ async def get_order_book(symbol: str, depth: int = 9) -> OrderBookSnapshot:
         raw_asks = data.get("asks", [])[:depth]
         raw_bids = data.get("bids", [])[:depth]
         if not raw_asks or not raw_bids:
-            return _demo_order_book(symbol, depth)
+            return OrderBookSnapshot(asks=[], bids=[], mid_price=0, bid_ratio=0)
 
         def _levels(rows: list[list[str]]) -> list[OrderBookLevel]:
             cumulative = 0.0
@@ -491,18 +376,18 @@ async def get_order_book(symbol: str, depth: int = 9) -> OrderBookSnapshot:
         bid_ratio = round(bid_vol / (bid_vol + ask_vol), 2) if (bid_vol + ask_vol) else 0.5
         return OrderBookSnapshot(asks=asks, bids=bids, mid_price=mid, bid_ratio=bid_ratio)
     except Exception as exc:
-        logger.warning(f"market_data.get_order_book fallback to demo: {exc}")
-        return _demo_order_book(symbol, depth)
+        logger.warning(f"market_data.get_order_book failed: {exc}")
+        return OrderBookSnapshot(asks=[], bids=[], mid_price=0, bid_ratio=0)
 
 
 async def get_trade_tape(symbol: str, count: int = 12) -> list[TradeTick]:
-    """成交流（Binance recent trades，失败回退 demo）。"""
+    """成交流（Binance recent trades）。"""
     try:
         rows = await _get_json(
             f"{_rest_base()}/api/v3/trades", {"symbol": _exchange_symbol(symbol), "limit": count}
         )
         if not isinstance(rows, list) or not rows:
-            return _demo_trade_tape(symbol, count)
+            return []
         # isBuyerMaker=True 表示卖方主动成交，主动买入为其取反。
         return [
             TradeTick(
@@ -514,8 +399,8 @@ async def get_trade_tape(symbol: str, count: int = 12) -> list[TradeTick]:
             for r in rows
         ]
     except Exception as exc:
-        logger.warning(f"market_data.get_trade_tape fallback to demo: {exc}")
-        return _demo_trade_tape(symbol, count)
+        logger.warning(f"market_data.get_trade_tape failed: {exc}")
+        return []
 
 
 async def get_top_movers(limit: int = 3) -> tuple[list[MarketTicker], list[MarketTicker]]:
@@ -527,7 +412,7 @@ async def get_top_movers(limit: int = 3) -> tuple[list[MarketTicker], list[Marke
 
 
 async def get_heatmap() -> list[tuple[str, float]]:
-    """热力图（真实 24h 涨跌幅，失败回退 demo 值）。"""
+    """热力图（真实 24h 涨跌幅）。"""
     tickers = await list_tickers()
     return [(t.base, round(t.change_pct, 1)) for t in tickers]
 
@@ -544,8 +429,7 @@ def _fng_label(classification: str) -> str:
 
 
 async def get_market_overview() -> MarketOverview:
-    """市场总览（CoinGecko global + alternative.me 情绪，任一失败该项回退）。"""
-    fallback = _demo_overview()
+    """市场总览（CoinGecko global + alternative.me 情绪）。"""
     try:
         gl = (await _get_json(_COINGECKO_GLOBAL)).get("data", {})
         total_cap = float(gl["total_market_cap"]["usd"])
@@ -557,28 +441,28 @@ async def get_market_overview() -> MarketOverview:
         total_market_cap_change_pct = round(cap_change, 2)
         btc_dominance = round(btc_dom, 1)
     except Exception as exc:
-        logger.warning(f"market_data.get_market_overview global fallback: {exc}")
-        total_market_cap = fallback.total_market_cap
-        volume_24h = fallback.volume_24h
-        total_market_cap_change_pct = fallback.total_market_cap_change_pct
-        btc_dominance = fallback.btc_dominance
+        logger.warning(f"market_data.get_market_overview global failed: {exc}")
+        total_market_cap = ""
+        volume_24h = ""
+        total_market_cap_change_pct = 0.0
+        btc_dominance = 0.0
 
-    fear_greed = fallback.fear_greed
-    fear_greed_label = fallback.fear_greed_label
+    fear_greed = 0
+    fear_greed_label = ""
     try:
         fng = (await _get_json(_FNG_URL))["data"][0]
         fear_greed = int(fng["value"])
         fear_greed_label = _fng_label(str(fng.get("value_classification", "")))
     except Exception as exc:
-        logger.warning(f"market_data.get_market_overview fng fallback: {exc}")
+        logger.warning(f"market_data.get_market_overview fng failed: {exc}")
 
     return MarketOverview(
         total_market_cap=total_market_cap,
         total_market_cap_change_pct=total_market_cap_change_pct,
         volume_24h=volume_24h,
-        volume_24h_change_pct=fallback.volume_24h_change_pct,
+        volume_24h_change_pct=0.0,
         btc_dominance=btc_dominance,
-        btc_dominance_change_pct=fallback.btc_dominance_change_pct,
+        btc_dominance_change_pct=0.0,
         fear_greed=fear_greed,
         fear_greed_label=fear_greed_label,
     )

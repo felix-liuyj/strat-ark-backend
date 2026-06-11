@@ -66,7 +66,7 @@ class AuditChainVerifyResponseData(ApiResponseModel):
 
 
 class AuditExportResponseData(ApiResponseModel):
-    """审计日志导出结果（拟真：返回导出条数与下载令牌）。"""
+    """审计日志导出结果。"""
 
     exported: int = Field(..., description="导出记录数")
     format: str = Field(..., description="导出格式")

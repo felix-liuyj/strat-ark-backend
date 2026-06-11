@@ -1,14 +1,19 @@
 """设置域 ViewModel：系统配置读写 + Prompt 模板 CRUD + 数据导出 / 清除。
 
 配置按 用户 + 分组 + key 存于 ``system_configs``；首次读取惰性种入默认值（与前端
-SettingsPage 默认展示一致）。LLM API Key 入库存明文、响应层掩码返回。
+SettingsPage 默认展示一致）。LLM API Key 经 Fernet 加密入库，响应层只返回掩码。
 """
 
+import base64
+import csv
+import io
+import json
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import Request
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from forms.settings import (
@@ -18,10 +23,16 @@ from forms.settings import (
     PromptTemplateForm,
     UpdateConfigGroupForm,
 )
+from libs import redis_cache
 from libs.auth.permissions import PermissionChecker
-from libs.integrations.data_ops import clear_data, export_data, test_llm_gateway
+from libs.crypto import CIPHER_PREFIX, decrypt_text, encrypt_text
+from libs.integrations.data_ops import test_llm_gateway
 from models.audit_log import ActorTypeEnum, AuditActionEnum, AuditCategoryEnum
+from models.backtests import BacktestTask
+from models.bot import Bot
 from models.settings import SystemConfig, SystemConfigGroupEnum
+from models.strategy import Strategy, StrategyVersion
+from models.trade import Order, Position, Trade
 from responses.settings import (
     ConfigGroupResponseData,
     DataActionResponseData,
@@ -44,6 +55,10 @@ __all__ = (
 
 # 敏感字段集合：响应层掩码、不回明文。
 _SECRET_KEYS: frozenset[str] = frozenset({"apiKey"})
+_CLEAR_TARGET_MARKET = "market_cache"
+_CLEAR_TARGET_BOTS = "bots_strategies"
+_EXPORT_SCOPES = {"all", "trades", "backtests"}
+_EXPORT_FORMATS = {"csv", "json"}
 
 # 各分组默认配置种子（与前端 SettingsPage 默认值对齐）。
 _GENERAL_DEFAULTS: dict[str, Any] = {
@@ -111,9 +126,23 @@ _PROMPT_SEED: list[dict[str, Any]] = [
 ]
 
 
+def _secret_plaintext(value: Any) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    if text.startswith(CIPHER_PREFIX):
+        return decrypt_text(text) or ""
+    return text
+
+
+def _secret_storage(value: Any) -> str:
+    text = str(value or "").strip()
+    return encrypt_text(text) if text else ""
+
+
 def _mask_secret(value: Any) -> str:
     """掩码敏感字符串：保留前缀与尾 4 位，中间以圆点替代。"""
-    text = str(value or "")
+    text = _secret_plaintext(value)
     if not text:
         return ""
     if len(text) <= 8:
@@ -133,6 +162,12 @@ def _mask_group(group: SystemConfigGroupEnum, items: dict[str, Any]) -> dict[str
     return {k: (_mask_secret(v) if k in _SECRET_KEYS else v) for k, v in items.items()}
 
 
+def _coerce_config_value(group: SystemConfigGroupEnum, key: str, value: Any) -> Any:
+    if group == SystemConfigGroupEnum.LLM and key in _SECRET_KEYS:
+        return _secret_storage(value)
+    return value
+
+
 async def _load_group(db: AsyncSession, user_id: int, group: SystemConfigGroupEnum) -> dict[str, Any]:
     """读取某标量分组配置；缺失项用默认值补齐并持久化（惰性种入）。"""
     rows = (
@@ -149,10 +184,25 @@ async def _load_group(db: AsyncSession, user_id: int, group: SystemConfigGroupEn
     missing = {k: v for k, v in defaults.items() if k not in stored}
     if missing:
         for key, value in missing.items():
-            db.add(SystemConfig(user_id=user_id, group=group, key=key, value=value))
+            stored_value = _coerce_config_value(group, key, value)
+            db.add(SystemConfig(user_id=user_id, group=group, key=key, value=stored_value))
         await db.commit()
-        stored |= missing
+        stored |= {k: _coerce_config_value(group, k, v) for k, v in missing.items()}
+    if group == SystemConfigGroupEnum.LLM and await _migrate_secret_rows(db, rows):
+        stored = {row.key: row.value for row in rows}
     return stored
+
+
+async def _migrate_secret_rows(db: AsyncSession, rows: list[SystemConfig]) -> bool:
+    changed = False
+    for row in rows:
+        if row.key not in _SECRET_KEYS or not row.value or str(row.value).startswith(CIPHER_PREFIX):
+            continue
+        row.value = _secret_storage(row.value)
+        changed = True
+    if changed:
+        await db.commit()
+    return changed
 
 
 async def _load_prompt_templates(db: AsyncSession, user_id: int) -> list[dict[str, Any]]:
@@ -277,10 +327,11 @@ class UpdateConfigGroupViewModel(BaseViewModel):
         for key, value in self.form.items.items():
             if key in _SECRET_KEYS and isinstance(value, str) and "•" in value:
                 continue  # 掩码占位，未真正修改
+            stored_value = _coerce_config_value(group, key, value)
             if key in existing:
-                existing[key].value = value
+                existing[key].value = stored_value
             else:
-                self.db.add(SystemConfig(user_id=user_id, group=group, key=key, value=value))
+                self.db.add(SystemConfig(user_id=user_id, group=group, key=key, value=stored_value))
         await self.db.commit()
 
         self._configure_audit(user_id, f"更新 {group.value} 配置")
@@ -430,7 +481,7 @@ class DeletePromptTemplateViewModel(BaseViewModel):
 
 
 class ExportDataViewModel(BaseViewModel):
-    """导出交易 / 回测数据（service stub）。"""
+    """导出当前用户交易 / 回测数据。"""
 
     audit_action = AuditActionEnum.EXPORT
     audit_resource = "data"
@@ -452,20 +503,26 @@ class ExportDataViewModel(BaseViewModel):
         await super().before()
         self.checker.require_auth()
 
-        result = export_data(self.form.fmt, self.form.scope)
+        fmt = self.form.fmt.strip().lower()
+        scope = self.form.scope.strip().lower()
+        if fmt not in _EXPORT_FORMATS or scope not in _EXPORT_SCOPES:
+            self.illegal_parameters("导出格式或范围不支持")
+            return
+        rows = await _export_rows(self.db, int(self.checker.user_id), scope)
+        download_url = _build_download_url(rows, fmt, scope)
         _configure_settings_audit(self, int(self.checker.user_id), f"导出数据 {self.form.scope}")
         self.operating_successfully(
             DataActionResponseData(
                 action="export",
                 target=self.form.scope,
-                message=result.message,
-                downloadUrl=result.download_url,
+                message=f"已导出 {len(rows)} 条记录",
+                downloadUrl=download_url,
             )
         )
 
 
 class ClearDataViewModel(BaseViewModel):
-    """清除数据（行情缓存 / 全部 Bot 与策略，service stub）。"""
+    """清除当前用户数据或系统行情缓存。"""
 
     audit_action = AuditActionEnum.DELETE
     audit_resource = "data"
@@ -487,14 +544,23 @@ class ClearDataViewModel(BaseViewModel):
         await super().before()
         self.checker.require_auth()
 
-        result = clear_data(self.form.target)
+        target = self.form.target.strip()
+        if target == _CLEAR_TARGET_MARKET:
+            count = await _clear_market_cache()
+            message = f"已清除 {count} 条行情缓存"
+        elif target == _CLEAR_TARGET_BOTS:
+            count = await _clear_bots_and_strategies(self.db, int(self.checker.user_id))
+            message = f"已清除 {count} 条 Bot / 策略相关记录"
+        else:
+            self.illegal_parameters("清除目标不支持")
+            return
         _configure_settings_audit(self, int(self.checker.user_id), f"清除数据 {self.form.target}")
         self.set_audit_resource_id(self.form.target)
         self.operating_successfully(
             DataActionResponseData(
                 action="clear",
                 target=self.form.target,
-                message=result.message,
+                message=message,
                 downloadUrl=None,
             )
         )
@@ -524,7 +590,7 @@ class TestLlmConnectionViewModel(BaseViewModel):
         if not provider or not endpoint or not api_key:
             self.illegal_parameters("Provider、Endpoint 与 API Key 不能为空")
             return
-        result = test_llm_gateway(provider, endpoint, api_key)
+        result = test_llm_gateway(provider, self.form.model.strip(), endpoint, api_key)
         self.operating_successfully(
             LlmConnectionTestResponseData(
                 ok=result.ok,
@@ -540,7 +606,98 @@ class TestLlmConnectionViewModel(BaseViewModel):
         if api_key and not _is_masked_secret(api_key):
             return api_key
         llm = await _load_group(self.db, int(self.checker.user_id), SystemConfigGroupEnum.LLM)
-        return str(llm.get("apiKey", "")).strip()
+        return _secret_plaintext(llm.get("apiKey", "")).strip()
+
+
+async def _export_rows(db: AsyncSession, user_id: int, scope: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if scope in ("all", "trades"):
+        trades = (await db.scalars(select(Trade).where(Trade.user_id == user_id).order_by(Trade.id.asc()))).all()
+        rows.extend(_trade_row(item) for item in trades)
+    if scope in ("all", "backtests"):
+        tasks = (
+            await db.scalars(
+                select(BacktestTask).where(BacktestTask.user_id == user_id).order_by(BacktestTask.id.asc())
+            )
+        ).all()
+        rows.extend(_backtest_row(item) for item in tasks)
+    return rows
+
+
+def _trade_row(item: Trade) -> dict[str, Any]:
+    return {
+        "type": "trade",
+        "id": item.id,
+        "symbol": item.symbol,
+        "side": str(item.side),
+        "status": str(item.status),
+        "botName": item.bot_name,
+        "pnl": item.pnl,
+        "pnlPct": item.pnl_pct,
+        "openedAt": item.opened_at,
+        "closedAt": item.closed_at,
+    }
+
+
+def _backtest_row(item: BacktestTask) -> dict[str, Any]:
+    return {
+        "type": "backtest",
+        "id": item.id,
+        "strategyName": item.strategy_name,
+        "symbol": item.symbol,
+        "timeframe": item.timeframe,
+        "status": str(item.status),
+        "totalReturn": item.total_return,
+        "maxDrawdown": item.max_drawdown,
+        "sharpe": item.sharpe,
+        "trades": item.trades,
+    }
+
+
+def _build_download_url(rows: list[dict[str, Any]], fmt: str, scope: str) -> str:
+    payload = _serialize_rows(rows, fmt)
+    stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+    mime = "text/csv" if fmt == "csv" else "application/json"
+    encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+    return f"data:{mime};name=stratark-{scope}-{stamp}.{fmt};base64,{encoded}"
+
+
+def _serialize_rows(rows: list[dict[str, Any]], fmt: str) -> str:
+    if fmt == "json":
+        return json.dumps(rows, ensure_ascii=False, indent=2)
+    fieldnames = sorted({key for row in rows for key in row} or {"type"})
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+    return out.getvalue()
+
+
+async def _clear_market_cache() -> int:
+    keys = [key async for key in redis_cache.scan_iter(match="market:*")]
+    if not keys:
+        return 0
+    await redis_cache.delete(*keys)
+    return len(keys)
+
+
+async def _clear_bots_and_strategies(db: AsyncSession, user_id: int) -> int:
+    strategy_ids = select(Strategy.id).where(Strategy.user_id == user_id)
+    statements = [
+        delete(Order).where(Order.user_id == user_id),
+        delete(Position).where(Position.user_id == user_id),
+        delete(Trade).where(Trade.user_id == user_id),
+        delete(BacktestTask).where(BacktestTask.user_id == user_id),
+        delete(Bot).where(Bot.user_id == user_id),
+        delete(StrategyVersion).where(StrategyVersion.strategy_id.in_(strategy_ids)),
+        delete(Strategy).where(Strategy.user_id == user_id),
+    ]
+    count = 0
+    for statement in statements:
+        result = await db.execute(statement)
+        count += result.rowcount or 0
+    await db.commit()
+    return count
 
 
 async def _get_template_row(db: AsyncSession, user_id: int, template_id: str) -> SystemConfig | None:

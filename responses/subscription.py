@@ -97,12 +97,12 @@ class InvoiceDownloadResponseData(ApiResponseModel):
 
 
 class CheckoutResponseData(ApiResponseModel):
-    """套餐切换结果：mode=checkout 时跳转 Stripe；mode=applied（未配置 Stripe）即时生效。"""
+    """套餐切换结果：mode=checkout 时跳转 Stripe。"""
 
-    mode: str = Field(..., description="结账模式：checkout（跳转 Stripe）/ applied（即时生效）")
+    mode: str = Field(..., description="结账模式：checkout（跳转 Stripe）")
     checkoutUrl: str | None = Field(None, description="Stripe Checkout 跳转地址（mode=checkout 时有值）")
     subscription: CurrentSubscriptionResponseData | None = Field(
-        None, description="即时生效后的订阅概况（mode=applied 时有值）"
+        None, description="保留字段；订阅状态以 Stripe Webhook 回写后的 /subscription 为准"
     )
 
 

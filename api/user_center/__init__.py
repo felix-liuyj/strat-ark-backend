@@ -20,13 +20,13 @@ from view_models.user_center import (
     BindOAuthViewModel,
     CreateApiKeyViewModel,
     GetTwoFactorViewModel,
-    SetupTwoFactorViewModel,
     ListApiKeysViewModel,
     ListOAuthBindingsViewModel,
     ListSessionsViewModel,
     LogoutAllSessionsViewModel,
     LogoutSessionViewModel,
     RevokeApiKeyViewModel,
+    SetupTwoFactorViewModel,
     UnbindOAuthViewModel,
     UpdateTwoFactorViewModel,
 )
@@ -102,7 +102,7 @@ async def list_oauth_bindings(
     "/user/oauth-bindings/bind",
     response_model=BaseResponseModel[OAuthBindingResponseData],
     summary="绑定第三方账号",
-    description="绑定指定第三方账号（service stub 模拟授权，不发起真实 OAuth 跳转）。",
+    description="绑定指定第三方账号；当前必须经真实 OAuth 授权回调，直接绑定会返回业务失败。",
     tags=["StratArk/用户中心"],
 )
 async def bind_oauth(

@@ -36,7 +36,7 @@ class SystemConfig(Base, TimestampMixin):
     """系统配置项（每用户 + 分组 + key 唯一）。
 
     ``value`` 为 JSON，可承载标量、对象或列表（Prompt 模板内容即对象）；
-    敏感字段（如 LLM API Key）入库存明文但响应层掩码返回。
+    敏感字段（如 LLM API Key）使用 Fernet 密文存储，响应层仅返回掩码。
     """
 
     __tablename__ = "system_configs"

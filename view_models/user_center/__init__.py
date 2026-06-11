@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from forms.user_center import BindOAuthForm, CreateApiKeyForm, UpdateTwoFactorForm
 from libs.auth.permissions import PermissionChecker
 from libs.crypto import decrypt_text, encrypt_text
-from libs.integrations.oauth import simulate_bind
 from libs.totp import generate_secret, provisioning_uri, verify_code
 from models.audit_log import ActorTypeEnum, AuditActionEnum, AuditCategoryEnum
 from models.settings import SystemConfig, SystemConfigGroupEnum
@@ -249,7 +248,7 @@ class ListOAuthBindingsViewModel(BaseViewModel):
 
 
 class BindOAuthViewModel(BaseViewModel):
-    """绑定第三方账号（service stub 模拟授权）。"""
+    """绑定第三方账号。真实 OAuth 授权流程未完成前拒绝直接绑定。"""
 
     audit_action = AuditActionEnum.UPDATE
     audit_resource = "oauth_binding"
@@ -270,46 +269,10 @@ class BindOAuthViewModel(BaseViewModel):
     async def before(self) -> None:
         await super().before()
         self.checker.require_auth()
-        user_id = int(self.checker.user_id)
         provider = self.form.provider
 
-        result = simulate_bind(provider.value, self.form.accountLabel)
-        now = datetime.now(UTC)
-        binding = await self.db.scalar(
-            select(OAuthBinding).where(
-                OAuthBinding.user_id == user_id,
-                OAuthBinding.provider == provider,
-            )
-        )
-        if binding is None:
-            binding = OAuthBinding(
-                user_id=user_id,
-                provider=provider,
-                bound=True,
-                account_label=result.account_label,
-                linked_at=now,
-            )
-            self.db.add(binding)
-        else:
-            if binding.bound:
-                self.nothing_changed()
-                return
-            binding.bound = True
-            binding.account_label = result.account_label
-            binding.linked_at = now
-        await self.db.commit()
-        await self.db.refresh(binding)
-
-        _configure_uc_audit(self, user_id, f"绑定 {provider.value} 账号", AuditActionEnum.UPDATE)
         self.set_audit_resource_id(provider.value)
-        self.operating_successfully(
-            OAuthBindingResponseData(
-                provider=provider,
-                bound=binding.bound,
-                accountLabel=binding.account_label,
-                linkedAt=_iso_or_none(binding.linked_at),
-            )
-        )
+        self.operating_failed(f"{provider.value} 账号绑定尚未接入真实 OAuth 授权流程")
 
 
 class UnbindOAuthViewModel(BaseViewModel):

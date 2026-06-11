@@ -3,7 +3,7 @@
 经官方 stripe SDK 实现订阅支付：创建客户、订阅 Checkout 会话、客户门户会话、Webhook 验签，
 以及把后台落库的套餐同步为 Stripe Product + 周期 Price（价格 ID 回填到 plans 表）。
 
-不再保留本地 mock 计费：订阅激活与发票以 Stripe Webhook 为准（异步流程，源真相在 Stripe）。
+订阅激活与发票以 Stripe Webhook 为准（异步流程，源真相在 Stripe）。
 签名 / 密钥 / Webhook 验签只在后端；前端只拿后端返回的跳转 URL，不接触任何密钥。
 """
 
@@ -28,7 +28,7 @@ __all__ = (
 
 
 def stripe_enabled() -> bool:
-    """是否已配置 Stripe 密钥（未配置时支付相关端点返回明确错误，不再回退 mock）。"""
+    """是否已配置 Stripe 密钥（未配置时支付相关端点返回明确错误）。"""
     return bool(get_settings().STRIPE_SECRET_KEY)
 
 
@@ -93,7 +93,13 @@ def construct_webhook_event(payload: bytes, sig_header: str) -> Any:
     return stripe.Webhook.construct_event(payload, sig_header, get_settings().STRIPE_WEBHOOK_SECRET)
 
 
-def _ensure_price(product_id: str, existing_id: str | None, unit_amount: int, currency: str, interval: str) -> str | None:
+def _ensure_price(
+    product_id: str,
+    existing_id: str | None,
+    unit_amount: int,
+    currency: str,
+    interval: str,
+) -> str | None:
     """确保产品在该计费周期下有匹配金额的 recurring Price：金额未变复用旧价，变更则新建并归档旧价。
 
     ``unit_amount`` 为「分」；<=0（免费 / 该周期无价）返回 None。

@@ -1,7 +1,7 @@
 """订阅域 ORM 模型与枚举：套餐定义 / 订阅记录 / 本月用量 / 账单发票。
 
 与前端 ``strat-ark-frontend/src/subscription/plans.ts`` 数据形状对齐；
-套餐升级 / 降级 / 取消仅更新本地订阅记录与 ``users.plan``，绝不接入真实支付。
+套餐升级由 Stripe Checkout + Webhook 驱动，取消优先走 Stripe Customer Portal。
 """
 
 from datetime import datetime
@@ -113,7 +113,7 @@ class Subscription(Base, TimestampMixin):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     current_period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     canceled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    # Stripe 订阅 ID（接 Stripe 时由 Webhook 回填；mock 流程为空）。
+    # Stripe 订阅 ID（由 Webhook 回填）。
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None, index=True)
 
 
@@ -135,9 +135,9 @@ class UsageCounter(Base, TimestampMixin):
 
 
 class Invoice(Base, TimestampMixin):
-    """账单 / 发票记录（模拟，无真实支付）。
+    """账单 / 发票记录。
 
-    切换到付费套餐时生成一条 ``paid`` 发票；发票下载由 service stub 产出。
+    Stripe Webhook 写入真实发票信息；下载时优先返回 Stripe 托管 PDF 链接。
     """
 
     __tablename__ = "invoices"

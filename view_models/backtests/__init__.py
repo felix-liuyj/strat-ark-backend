@@ -119,8 +119,15 @@ def _serialize_series(result: backtest_engine.BacktestRunResult) -> dict:
     }
 
 
+async def _save_failed_task(db: AsyncSession, task: BacktestTask, message: str) -> None:
+    task.status = BacktestStatusEnum.FAILED
+    task.error_message = message[:1000]
+    db.add(task)
+    await db.commit()
+
+
 class CreateBacktestViewModel(BaseViewModel):
-    """创建并运行回测任务（同步调引擎 stub，完成后回填结果）。"""
+    """创建并运行回测任务（同步使用真实行情计算结果）。"""
 
     def __init__(
         self,
@@ -161,17 +168,26 @@ class CreateBacktestViewModel(BaseViewModel):
             status=BacktestStatusEnum.RUNNING,
         )
 
-        # 引擎 stub 同步返回拟真结果，直接回填并标记完成（真实实现应转后台任务）。
-        result = backtest_engine.run_backtest(
-            strategy_name=strategy_name,
-            symbol=symbol,
-            timeframe=task.timeframe,
-            start_date=task.start_date,
-            end_date=task.end_date,
-            initial_balance=task.initial_balance,
-            fee_rate=task.fee_rate,
-            slippage_rate=task.slippage_rate,
-        )
+        try:
+            result = await backtest_engine.run_backtest(
+                strategy_name=strategy_name,
+                symbol=symbol,
+                timeframe=task.timeframe,
+                start_date=task.start_date,
+                end_date=task.end_date,
+                initial_balance=task.initial_balance,
+                fee_rate=task.fee_rate,
+                slippage_rate=task.slippage_rate,
+            )
+        except backtest_engine.BacktestDataUnavailableError as exc:
+            await _save_failed_task(self.db, task, str(exc))
+            self.operating_failed(str(exc))
+            return
+        except Exception as exc:
+            await _save_failed_task(self.db, task, str(exc))
+            self.system_error("回测执行失败")
+            return
+
         task.total_return = result.total_return
         task.cagr = result.cagr
         task.max_drawdown = result.max_drawdown
@@ -258,7 +274,7 @@ class GetBacktestResultViewModel(BaseViewModel):
 
 
 class ReviewBacktestViewModel(BaseViewModel):
-    """对回测结果发起 AI 多智能体复盘（调 TradingAgents stub）。"""
+    """对回测结果发起 AI 多智能体复盘（调 TradingAgents 网关）。"""
 
     def __init__(self, request: Request, db: AsyncSession, task_id: int, checker: PermissionChecker) -> None:
         super().__init__(request=request)

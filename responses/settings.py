@@ -51,13 +51,12 @@ class SettingsOverviewResponseData(ApiResponseModel):
 
 
 class DataActionResponseData(ApiResponseModel):
-    """数据导出 / 清除操作结果（stub）。"""
+    """数据导出 / 清除操作结果。"""
 
     action: str = Field(..., description="操作类型：export / clear")
     target: str = Field(..., description="操作对象")
     message: str = Field(..., description="结果说明")
-    # 导出时给出占位下载地址（真实实现为 OSS 链接或文件流）。
-    downloadUrl: str | None = Field(None, description="导出文件占位下载地址")
+    downloadUrl: str | None = Field(None, description="导出文件下载地址")
 
 
 class LlmConnectionTestResponseData(ApiResponseModel):

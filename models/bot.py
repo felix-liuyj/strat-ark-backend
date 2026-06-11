@@ -3,7 +3,7 @@
 对齐前端 Bots / Bot Detail / Bot Wizard：基本信息、交易模式、运行模式（默认 dry_run）、
 绑定策略与交易所账户、交易对、仓位与执行参数、风控参数、各类开关。
 交易 / 持仓 / 日志为运行时数据，统一由 libs.integrations.freqtrade 提供（config 驱动接真实引擎，
-未配置时回退拟真数据），不落库。
+未配置或实例不可达时返回明确错误），不落库。
 """
 
 from enum import StrEnum

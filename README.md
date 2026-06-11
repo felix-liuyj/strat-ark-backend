@@ -14,7 +14,7 @@
 - [项目结构](#项目结构)
 - [业务域与 API 模块](#业务域与-api-模块)
 - [核心能力](#核心能力)
-- [外部集成（stub）](#外部集成stub)
+- [外部集成](#外部集成)
 - [技术栈](#技术栈)
 - [环境变量](#环境变量)
 - [文档与部署](#文档与部署)
@@ -59,7 +59,7 @@ poetry run python -m unittest discover -s tests -v
 
 ## 演示账号
 
-`scripts/seed` 写入三个与前端 mock 对齐的角色账号（统一密码 `strategy123`）：
+`scripts/seed` 写入三个演示角色账号（统一密码 `strategy123`）：
 
 | 邮箱 | 角色 | 套餐 | 可见范围 |
 |---|---|---|---|
@@ -84,7 +84,7 @@ strat-ark-backend/
 │   ├── auth/       # JWT 签发/校验、PermissionChecker
 │   ├── audit/      # 平台审计（上下文 + 链式签名持久化服务）
 │   ├── ctrl/       # db（SQLAlchemy / Redis）、cloud（OSS）
-│   ├── integrations/  # 外部集成 stub（见下）
+│   ├── integrations/  # 外部集成（见下）
 │   ├── handler/    # 全局异常处理
 │   └── response.py # 统一响应模型与状态码
 ├── configs/        # pydantic-settings 配置
@@ -109,9 +109,9 @@ strat-ark-backend/
 | 交易记录 trades | Trades | 交易 / 持仓 / 未完成订单 / 统计 / CSV 导出 |
 | 行情 market | Market / Detail | 行情列表 / 涨跌榜 / 热力图 / 自选 / 单币种深度（K线/订单簿/成交/AI 快照） |
 | 通知 notification | Notifications | 信息流 / 标记已读 / 事件×渠道矩阵 / 渠道配置（各类型）/ 发送测试 |
-| 引擎 engine（管理员） | Engine Management | 监控 Pods/资源/依赖/日志 / 连接 / 配置 / 运维操作（危险操作写审计） |
+| 引擎 engine（管理员） | Engine Management | 服务连接状态 / 依赖 / 日志 / 连接 / 配置 / 运维操作（危险操作写审计） |
 | 审计 audit（管理员） | Audit Log | 列表筛选 / 详情 / 链式签名校验 / 导出 |
-| 订阅 subscription | Pricing / 套餐与用量 | 套餐目录 / 当前订阅 / 切换（模拟）/ 用量 / 账单发票 |
+| 订阅 subscription | Pricing / 套餐与用量 | 套餐目录 / 当前订阅 / Stripe Checkout / 用量 / 账单发票 |
 | 设置 settings | Settings | General / LLM 网关 / Prompt 模板 / 外观 / 数据 |
 | 用户中心 user_center | User Center | 平台 API Key / 第三方账号绑定 / 活跃会话 / 2FA |
 
@@ -122,21 +122,20 @@ strat-ark-backend/
 - **ViewModel 三层**：路由（参数映射）→ ViewModel（`async with` 生命周期，`before()`）→ 统一响应。
 - **JWT 鉴权 + OAuth 登录**：access/refresh 双 token；Google / Microsoft 授权码后端 exchange；引擎管理与审计日志仅管理员。
 - **平台审计**：append-only + sha256 链式签名（可校验、不可篡改），危险运维操作自动留痕。
-- **订阅计费（模拟）**：套餐 / 用量 / 账单；升级降级取消仅更新本地订阅与 `users.plan`，**绝不接入真实支付**。
+- **订阅计费**：套餐 / 用量 / 账单；付费切换走 Stripe Checkout，订阅激活与发票以 Stripe Webhook 为准。
 - **统一响应契约 + 全局异常处理**：`operating_successfully` / `not_found` / `forbidden` 等；401/403/422/500 收敛为业务响应。
 - **OSS 直传**：`/common/oss/presign` + `/common/oss/confirm`，目录和扩展名白名单校验后再签发 PUT URL。
 
-## 外部集成（stub）
+## 外部集成
 
-`libs/integrations/*` 以接口 stub 实现，返回**拟真 mock 数据**，函数签名为真实接入预留；留空相关配置即用 mock，不影响本地运行与演示。已涵盖：
+`libs/integrations/*` 按外部能力分层封装；缺少真实上游配置时返回空结果或明确失败，不制造演示成功数据。已涵盖：
 
-- `exchange` / `freqtrade`（交易所 REST、Bot 编排与容器）
-- `trading_agents` / `agent` / `backtest_engine`（多智能体投研、回测引擎）
-- `market_data` / `trading` / `risk_engine`（行情、交易记录、风控评估）
-- `kubernetes` / `notifier`（引擎集群运维、多渠道通知发送）
-- `billing` / `data_ops` / `oauth`（订阅计费、数据导出、用户中心第三方绑定）
+- `exchange` / `freqtrade`（交易所 REST、Bot 编排与实例 REST）
+- `trading_agents` / `backtest_engine`（多智能体投研、真实行情回测）
+- `market_data` / `notifier`（行情、多渠道通知发送）
+- `billing` / `data_ops`（Stripe 订阅计费、数据导出与 LLM 网关测试）
 
-接入真实服务时，替换对应 stub 实现，并在管理员引擎管理中维护 Freqtrade /
+配置外部服务时，在管理员引擎管理中维护 Freqtrade /
 TradingAgents 的连接配置、凭证、服务地址与部署参数。后端 `.env` 不再作为引擎连接
 参数的事实源；`docker-compose.engines.yml` 只负责 Freqtrade 服务编排，
 `docker-compose.prod.yml` 只负责 TradingAgents API 服务启动。
@@ -160,8 +159,7 @@ FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy 2.0（异步）· PostgreSQL（p
 | 业务敏感数据加密 | `ENCRYPT_KEY` | 交易所和网关密钥入库加密，生产必须注入强随机值 |
 | 阿里云 OSS | `ALI_OSS_*`、`BRAND_LOGO_OSS_PATH` | 文件上传和邮件 logo 公开地址；上传目录规则在 `libs/upload_rules.py` |
 | SMTP 邮件 | `SMTP_*` | 邮件验证码发送 |
-| 行情数据源 | `MARKET_DATA_*` | 行情 REST / WS 数据源，留空走 stub |
-| Kubernetes 运维 | `K8S_*` | 引擎集群状态与运维配置 |
+| 行情数据源 | `MARKET_DATA_*` | 行情 REST / WS 数据源，默认 Binance 公共行情 |
 | 静态资源 | `STATIC_*` | 本地静态资源目录和访问前缀 |
 
 引擎连接配置不走后端全局环境变量。Freqtrade、TradingAgents、模型网关等服务地址、
@@ -175,7 +173,7 @@ Token、API Key 和模型参数由管理员在引擎管理中维护，按引擎�
 
 - API 文档：`/docs`（Swagger）、`/redoc`
 - 容器编排（仓库根目录，base / Freqtrade 引擎 / 生产 override 三份）：
-  - `docker-compose.yml` — base：PostgreSQL + Redis + 后端 + 前端，引擎连接留空走 stub；本地 `docker compose up -d --build`
+  - `docker-compose.yml` — base：PostgreSQL + Redis + 后端 + 前端；外部集成未配置时返回空结果或明确失败；本地 `docker compose up -d --build`
   - `docker-compose.engines.yml` — **Freqtrade 执行引擎独立编排**，已按生产全面加固（非 root / read_only / cap_drop / 日志轮转 / 资源 limits+reservations）；可单独启动：`docker compose -f docker-compose.engines.yml up -d`
   - `docker-compose.prod.yml` — 生产 override：主栈生产化，并经 `include` 自动引入 Freqtrade；TradingAgents 直接部署为 `tradingagents-api` API 服务；`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
 - 主机部署：[`deploy/README.md`](deploy/README.md)（systemd + Poetry）

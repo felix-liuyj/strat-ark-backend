@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     # 交易所私有 REST（账户信息查询：余额 / 权限，非下单）
     # 默认 Binance 现货 REST；GET /api/v3/account 需 HMAC-SHA256 签名 + X-MBX-APIKEY 头。
     # 仅当 view_model 能拿到可用的明文 api_key + api_secret 时才发起真实请求，
-    # 否则（掩码 key / 空 secret / 占位密文）一律回退确定性拟真数据。
+    # 否则返回凭证不可用错误，不制造账户数据。
     EXCHANGE_API_BASE: str = "https://api.binance.com"
 
     # 引擎运行时（freqtrade / tradingagents）经服务连接交互：地址存于各引擎的
@@ -111,7 +111,7 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def stripe_enabled(self) -> bool:
-        """是否已配置 Stripe（未配置则订阅走 mock 回退）。"""
+        """是否已配置 Stripe（未配置时付费切换返回明确错误）。"""
         return bool(self.STRIPE_SECRET_KEY)
 
     @computed_field

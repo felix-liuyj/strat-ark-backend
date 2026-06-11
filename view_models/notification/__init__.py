@@ -1,7 +1,7 @@
 """通知与通知渠道 view models。
 
 覆盖：通知信息流、标记已读 / 全部已读、创建通知、渠道配置 CRUD（按渠道类型字段不同）、
-渠道发送测试（调 notifier service stub）、事件 × 渠道订阅矩阵读写。
+渠道发送测试（调 notifier 真实发送能力）、事件 × 渠道订阅矩阵读写。
 """
 
 from typing import Any
@@ -448,7 +448,7 @@ class DeleteNotificationChannelViewModel(BaseViewModel):
 
 
 class SendChannelTestViewModel(BaseViewModel):
-    """发送渠道测试通知（调 notifier service stub）。"""
+    """发送渠道测试通知（调 notifier 真实发送能力）。"""
 
     def __init__(
         self,

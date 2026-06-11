@@ -44,7 +44,7 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?生产必须在 .env 设置 JWT_SECRET_KEY}
       ENCRYPT_KEY: ${ENCRYPT_KEY:?生产必须在 .env 设置 ENCRYPT_KEY}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      # Stripe 订阅支付（生产启用收费时必填两项；留空则订阅走本地模拟、不发起真实扣费）
+      # Stripe 订阅支付（生产启用收费时必填两项；留空则付费切换明确失败）
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       # Checkout / Portal 回跳的前端公网基址，留空取首个 CORS origin

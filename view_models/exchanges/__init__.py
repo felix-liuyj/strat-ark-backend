@@ -2,7 +2,7 @@
 
 增删改查 + 连接测试 + 同步余额 + 查看权限 + 设为默认。API Key/Secret 经 Fernet
 可逆加密存储（libs/crypto），不明文回显；已保存账户的真实请求在本层解密后调
-libs.integrations.exchange。历史占位密文（enc::N）解密失败时提示重新录入，不回退拟真。
+libs.integrations.exchange。历史占位密文（enc::N）解密失败时提示重新录入，不回退演示数据。
 """
 
 from datetime import UTC, datetime

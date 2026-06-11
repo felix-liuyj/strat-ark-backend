@@ -138,7 +138,7 @@ async def delete_prompt_template(
     "/settings/data/export",
     response_model=BaseResponseModel[DataActionResponseData],
     summary="导出数据",
-    description="导出全部交易与回测数据（service stub，返回占位下载地址）。",
+    description="导出当前用户交易与回测数据，返回可直接下载的文件地址。",
     tags=["StratArk/系统设置"],
 )
 async def export_data_endpoint(
@@ -154,7 +154,7 @@ async def export_data_endpoint(
     "/settings/data/clear",
     response_model=BaseResponseModel[DataActionResponseData],
     summary="清除数据",
-    description="清除行情缓存或全部 Bot 与策略（service stub，危险操作由前端二次确认）。",
+    description="清除行情缓存或当前用户全部 Bot 与策略相关数据，危险操作由前端二次确认。",
     tags=["StratArk/系统设置"],
 )
 async def clear_data_endpoint(

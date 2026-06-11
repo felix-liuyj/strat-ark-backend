@@ -1,8 +1,7 @@
 """策略 view models。
 
-列表 / 详情 / 参数 / 版本 / 回测入口（占位）/ 源码 / 风险标签 / 创建 / 导入 / 更新。
+列表 / 详情 / 参数 / 版本 / 回测入口 / 源码 / 风险标签 / 创建 / 导入 / 更新。
 策略可见性：平台内置（user_id 为空）对所有登录用户可见，叠加用户私有策略。
-真实回测在 backtests 域，本域回测入口仅返回占位任务。
 """
 
 import re
@@ -14,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from forms.strategy import StrategyCreateForm, StrategyImportForm, StrategyUpdateForm
 from libs.auth.permissions import PermissionChecker
+from libs.integrations import backtest_engine
+from models.backtests import BacktestStatusEnum, BacktestTask
 from models.strategy import (
     Strategy,
     StrategyRiskEnum,
@@ -64,8 +65,8 @@ _DEFAULT_PARAMS: dict[StrategyTypeEnum, list[list[str]]] = {
 }
 
 
-def _build_source_stub(name: str, timeframe: str, params: list[list[str]]) -> str:
-    """生成源码预览占位（复刻前端源码片段：类名去非字母、stoploss 字面量）。"""
+def _build_source_preview(name: str, timeframe: str, params: list[list[str]]) -> str:
+    """根据策略参数生成源码预览（类名去非字母、stoploss 字面量）。"""
     class_name = re.sub(r"[^A-Za-z]", "", name) or "Strategy"
     tf = timeframe.split(" ")[0].split("/")[0].strip() or "15m"
     stop_value = "-0.06"
@@ -127,6 +128,15 @@ def _build_detail(strategy: Strategy, versions: list[StrategyVersion]) -> Strate
         description=strategy.description,
         versions=[_build_version_data(version) for version in versions],
     )
+
+
+def _serialize_backtest_series(result: backtest_engine.BacktestRunResult) -> dict:
+    return {
+        "equityCurve": [{"x": point.x, "value": point.value} for point in result.equity_curve],
+        "drawdownCurve": [{"x": point.x, "value": point.value} for point in result.drawdown_curve],
+        "dailyReturns": [{"day": point.day, "value": point.value} for point in result.daily_returns],
+        "pairReturns": [{"name": point.name, "value": point.value} for point in result.pair_returns],
+    }
 
 
 class _AuthedStrategyViewModel(BaseViewModel):
@@ -253,7 +263,7 @@ class CreateStrategyViewModel(_AuthedStrategyViewModel):
             is_builtin=False,
             params=params,
             tags=[_TYPE_LABELS.get(self.form.strategyType, ""), self.form.timeframe],
-            source_code=_build_source_stub(name, self.form.timeframe, params),
+            source_code=_build_source_preview(name, self.form.timeframe, params),
         )
         self.db.add(strategy)
         await self.db.flush()
@@ -366,7 +376,7 @@ class UpdateStrategyViewModel(_AuthedStrategyViewModel):
             strategy.market = self.form.market.strip()
         if self.form.params is not None:
             strategy.params = self.form.params
-            strategy.source_code = _build_source_stub(strategy.name, strategy.timeframe, self.form.params)
+            strategy.source_code = _build_source_preview(strategy.name, strategy.timeframe, self.form.params)
             changes["params"] = self.form.params
 
         if not changes and self.form.market is None:
@@ -386,7 +396,7 @@ class UpdateStrategyViewModel(_AuthedStrategyViewModel):
 
 
 class SubmitStrategyBacktestViewModel(_AuthedStrategyViewModel):
-    """提交回测（入口占位：真实回测在 backtests 域）。"""
+    """提交回测（按策略自身交易对与周期创建真实回测任务）。"""
 
     def __init__(
         self,
@@ -406,12 +416,66 @@ class SubmitStrategyBacktestViewModel(_AuthedStrategyViewModel):
             self.not_found("策略不存在")
             return
 
-        # 占位：真实任务创建与执行在 backtests 域；此处仅回执已受理。
+        symbol = strategy.market.strip() or "BTC/USDT"
+        task = BacktestTask(
+            user_id=int(self.checker.user_id),
+            strategy_id=strategy.id,
+            strategy_name=strategy.name,
+            symbol=symbol,
+            timeframe=strategy.timeframe.strip() or "1h",
+            start_date="",
+            end_date="",
+            initial_balance=10000.0,
+            fee_rate=0.0004,
+            slippage_rate=0.0005,
+            status=BacktestStatusEnum.RUNNING,
+        )
+        try:
+            result = await backtest_engine.run_backtest(
+                strategy_name=strategy.name,
+                symbol=symbol,
+                timeframe=task.timeframe,
+                start_date=task.start_date,
+                end_date=task.end_date,
+                initial_balance=task.initial_balance,
+                fee_rate=task.fee_rate,
+                slippage_rate=task.slippage_rate,
+            )
+        except backtest_engine.BacktestDataUnavailableError as exc:
+            task.status = BacktestStatusEnum.FAILED
+            task.error_message = str(exc)
+            self.db.add(task)
+            await self.db.commit()
+            self.operating_failed(str(exc))
+            return
+        except Exception as exc:
+            task.status = BacktestStatusEnum.FAILED
+            task.error_message = str(exc)
+            self.db.add(task)
+            await self.db.commit()
+            self.system_error("回测执行失败")
+            return
+        task.total_return = result.total_return
+        task.cagr = result.cagr
+        task.max_drawdown = result.max_drawdown
+        task.sharpe = result.sharpe
+        task.win_rate = result.win_rate
+        task.profit_factor = result.profit_factor
+        task.avg_duration_hours = result.avg_duration_hours
+        task.trades = result.trades
+        task.best_pair = result.best_pair
+        task.worst_pair = result.worst_pair
+        task.final_balance = result.final_balance
+        task.result_series = _serialize_backtest_series(result)
+        task.status = BacktestStatusEnum.COMPLETED
+        self.db.add(task)
+        await self.db.commit()
+        await self.db.refresh(task)
         self.operating_successfully(
             StrategyBacktestSubmitResponseData(
-                taskId=f"bt_pending_{strategy.id}",
+                taskId=str(task.id),
                 strategyId=strategy.id,
-                status="queued",
-                message=f"{strategy.name} 回测任务已提交 · 运行中",
+                status=task.status,
+                message=f"{strategy.name} 回测已完成",
             )
         )

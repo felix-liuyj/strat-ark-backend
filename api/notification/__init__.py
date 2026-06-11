@@ -185,7 +185,7 @@ async def delete_notification_channel(
     "/notification-channels/{channel_id}/test",
     response_model=BaseResponseModel[NotificationTestResponseData],
     summary="发送渠道测试",
-    description="向指定渠道发送一条测试通知（service stub 模拟发送）。",
+    description="向指定渠道发送一条真实测试通知；未接入发送网关的渠道返回明确失败。",
     tags=_TAGS,
 )
 async def send_channel_test(

@@ -1,6 +1,6 @@
 """交易记录视图模型。
 
-交易记录 / 持仓 / 统计来自用户运行中 bot 的 freqtrade 实例 REST 聚合（无 mock）：
+交易记录 / 持仓 / 统计来自用户运行中 bot 的 freqtrade 实例 REST 聚合：
 遍历本人 RUNNING 且实例凭证可用的 bot，并发拉取已平仓成交与当前持仓后合并。
 单个实例不可达时跳过该 bot（记日志，不伪造数据、不整体失败）；停机用户无数据即空。
 CSV 导出由前端触发下载；未完成挂单 freqtrade 无独立来源，返回空；取消挂单不支持。
@@ -19,9 +19,8 @@ from libs.crypto import decrypt_text
 from libs.integrations import freqtrade as ft
 from libs.logger import logger
 from models.bot import Bot, BotStatusEnum
-from models.trade import OrderStatusEnum, OrderTypeEnum, TradeSideEnum, TradeStatusEnum
+from models.trade import TradeSideEnum, TradeStatusEnum
 from responses.trade import (
-    OpenOrderResponseData,
     PositionResponseData,
     TradeExportResponseData,
     TradeResponseData,

@@ -1,4 +1,4 @@
-"""Freqtrade 编排与实例运行时集成（真实 REST，无 mock）。
+"""Freqtrade 编排与实例运行时集成（真实 REST）。
 
 两层客户端：
 - **编排器**（orchestrator，engines/freqtrade-orchestrator）：per-bot 实例容器的

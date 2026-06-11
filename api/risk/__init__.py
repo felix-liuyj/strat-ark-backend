@@ -59,8 +59,9 @@ async def get_risk_overview(
 async def list_risk_levels(
     request: Request,
     checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(ListRiskLevelsViewModel, request, checker=checker)
+    return await create_response(ListRiskLevelsViewModel, request, db, checker=checker)
 
 
 @router.get(

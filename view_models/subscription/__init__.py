@@ -1,14 +1,14 @@
 """订阅域 ViewModel：套餐目录 / 当前订阅 / 用量 / 账单 / Stripe Checkout / 客户门户 / Webhook / 后台套餐管理。
 
 升级走 Stripe 订阅 Checkout，取消 / 管理走 Customer Portal，订阅激活与发票以 Stripe Webhook 为准；
-后台可编辑套餐元数据（落库 plans 表）并「同步到 Stripe」（创建 Product + Price 并回填价格 ID）。无 mock 计费。
+后台可编辑套餐元数据（落库 plans 表）并「同步到 Stripe」（创建 Product + Price 并回填价格 ID）。
 """
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from configs import get_settings
@@ -18,7 +18,11 @@ from libs.integrations import billing
 from libs.logger import logger
 from libs.sso import AUTH_INVALID_MESSAGE
 from models.account import PlanEnum, UserTypeEnum
+from models.ai import AgentReport
 from models.audit_log import ActorTypeEnum, AuditActionEnum, AuditCategoryEnum
+from models.backtests import BacktestTask
+from models.bot import Bot
+from models.strategy import Strategy
 from models.subscription import (
     BillingCycleEnum,
     Invoice,
@@ -26,7 +30,6 @@ from models.subscription import (
     Plan,
     Subscription,
     SubscriptionStatusEnum,
-    UsageCounter,
     UsageMetricEnum,
 )
 from models.user import User
@@ -129,32 +132,6 @@ _USAGE_LABELS: dict[UsageMetricEnum, str] = {
     UsageMetricEnum.BACKTESTS: "subscription.usage.backtests",
 }
 
-# 各套餐默认用量种子（演示数据，与前端 usageForPlan 占比一致）。
-_USAGE_SEED: dict[PlanEnum, dict[UsageMetricEnum, int]] = {
-    PlanEnum.FREE: {
-        UsageMetricEnum.BOTS: 1,
-        UsageMetricEnum.STRATEGIES: 2,
-        UsageMetricEnum.AI_ANALYSIS: 14,
-        UsageMetricEnum.BACKTESTS: 6,
-    },
-    PlanEnum.PRO: {
-        UsageMetricEnum.BOTS: 2,
-        UsageMetricEnum.STRATEGIES: 4,
-        UsageMetricEnum.AI_ANALYSIS: 186,
-        UsageMetricEnum.BACKTESTS: 0,
-    },
-    PlanEnum.TEAM: {
-        UsageMetricEnum.BOTS: 12,
-        UsageMetricEnum.STRATEGIES: 28,
-        UsageMetricEnum.AI_ANALYSIS: 640,
-        UsageMetricEnum.BACKTESTS: 0,
-    },
-}
-
-
-def _current_period() -> str:
-    return datetime.now(UTC).strftime("%Y-%m")
-
 
 def _iso_or_none(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
@@ -221,7 +198,25 @@ async def _get_plan(db: AsyncSession, code: PlanEnum) -> Plan | None:
     return next((p for p in plans if p.code == code), None)
 
 
-async def _apply_local_change(
+async def _count_rows(db: AsyncSession, model: object, *where: object) -> int:
+    return int(await db.scalar(select(func.count()).select_from(model).where(*where)) or 0)
+
+
+async def _load_actual_usage(db: AsyncSession, user_id: int) -> dict[UsageMetricEnum, int]:
+    month_start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return {
+        UsageMetricEnum.BOTS: await _count_rows(db, Bot, Bot.user_id == user_id),
+        UsageMetricEnum.STRATEGIES: await _count_rows(db, Strategy, Strategy.user_id == user_id),
+        UsageMetricEnum.AI_ANALYSIS: await _count_rows(
+            db, AgentReport, AgentReport.user_id == user_id, AgentReport.created_at >= month_start
+        ),
+        UsageMetricEnum.BACKTESTS: await _count_rows(
+            db, BacktestTask, BacktestTask.user_id == user_id, BacktestTask.created_at >= month_start
+        ),
+    }
+
+
+async def _apply_subscription_change(
     db: AsyncSession,
     user: User,
     plan: Plan,
@@ -232,8 +227,7 @@ async def _apply_local_change(
 ) -> Subscription:
     """本地应用套餐变更：撤销旧 active 订阅 → 写新 active 订阅(+可选已支付发票) → 更新 users.plan。
 
-    用于未配置 Stripe 的即时 mock 路径，以及 Stripe Webhook 激活订阅（传 write_invoice=False，
-    发票由 invoice.paid 事件单独落地、带托管 PDF 链接）。
+    用于 Stripe Webhook 激活订阅；发票由 invoice.paid 事件单独落地、带托管 PDF 链接。
     """
     now = datetime.now(UTC)
     actives = (
@@ -351,30 +345,9 @@ class ListUsageViewModel(BaseViewModel):
             self.not_found("套餐不存在")
             return
 
-        counters = await self._ensure_usage_seeded(user.id, user.plan)
+        counters = await _load_actual_usage(self.db, user.id)
         bars = [self._build_bar(plan, metric, counters.get(metric, 0)) for metric in UsageMetricEnum]
         self.operating_successfully(bars)
-
-    async def _ensure_usage_seeded(
-        self, user_id: int, plan_code: PlanEnum
-    ) -> dict[UsageMetricEnum, int]:
-        period = _current_period()
-        existing = (
-            await self.db.scalars(
-                select(UsageCounter).where(
-                    UsageCounter.user_id == user_id,
-                    UsageCounter.period == period,
-                )
-            )
-        ).all()
-        if existing:
-            return {UsageMetricEnum(c.metric): c.used for c in existing}
-
-        seed = _USAGE_SEED.get(plan_code, _USAGE_SEED[PlanEnum.FREE])
-        for metric, used in seed.items():
-            self.db.add(UsageCounter(user_id=user_id, metric=metric, period=period, used=used))
-        await self.db.commit()
-        return dict(seed)
 
     @staticmethod
     def _build_bar(plan: Plan, metric: UsageMetricEnum, used: int) -> UsageBarResponseData:
@@ -474,10 +447,7 @@ class DownloadInvoiceViewModel(BaseViewModel):
 
 
 class ChangePlanViewModel(BaseViewModel):
-    """套餐即时变更（POST /subscription/change）：未启用 Stripe 的本地直切路径。
-
-    启用 Stripe 后付费套餐必须走 Checkout 完成支付，本端点直接拒绝，防止绕过计费。
-    """
+    """套餐变更兼容入口：付费套餐必须走 Stripe Checkout。"""
 
     audit_action = AuditActionEnum.UPDATE
     audit_resource = "subscription"
@@ -504,21 +474,7 @@ class ChangePlanViewModel(BaseViewModel):
         if target == user.plan:
             self.nothing_changed()
             return
-        if billing.stripe_enabled():
-            self.illegal_parameters("已启用在线支付，请通过结账流程切换套餐")
-            return
-        plan = await _get_plan(self.db, target)
-        if plan is None:
-            self.not_found("目标套餐不存在")
-            return
-
-        subscription = await _apply_local_change(self.db, user, plan, self.form.billingCycle)
-        if self._audit_context:
-            self._audit_context.category = AuditCategoryEnum.SUBSCRIPTION
-            self._audit_context.actor_type = ActorTypeEnum.USER
-            self._audit_context.actor_id = self.checker.user_id
-        self.set_audit_resource_id(str(subscription.id))
-        self.operating_successfully(_build_current_subscription(user.plan, subscription))
+        self.illegal_parameters("付费套餐必须通过结账流程完成支付")
 
 
 class CancelSubscriptionViewModel(BaseViewModel):
@@ -580,8 +536,7 @@ class CancelSubscriptionViewModel(BaseViewModel):
 
 
 class CreateCheckoutViewModel(BaseViewModel):
-    """发起套餐升级 / 切换：已配 Stripe 创建 Checkout 会话返回跳转 URL（mode=checkout）；
-    未配 Stripe 回退本地即时生效（mode=applied），与前端 CheckoutResult 契约对齐。"""
+    """发起套餐升级 / 切换：创建 Stripe Checkout 会话返回跳转 URL。"""
 
     def __init__(self, request: Request, db: AsyncSession, form: ChangePlanForm, checker: PermissionChecker) -> None:
         super().__init__(request=request)
@@ -611,14 +566,7 @@ class CreateCheckoutViewModel(BaseViewModel):
 
         cycle = self.form.billingCycle
         if not billing.stripe_enabled():
-            subscription = await _apply_local_change(self.db, user, plan, cycle)
-            self.operating_successfully(
-                CheckoutResponseData(
-                    mode="applied",
-                    checkoutUrl=None,
-                    subscription=_build_current_subscription(user.plan, subscription),
-                )
-            )
+            self.illegal_parameters("未启用 Stripe 结账，无法切换付费套餐")
             return
         price_id = plan.stripe_price_yearly_id if cycle == BillingCycleEnum.YEARLY else plan.stripe_price_monthly_id
         if not price_id:
@@ -736,7 +684,7 @@ class StripeWebhookViewModel(BaseViewModel):
         cycle_value = metadata.get("cycle", "monthly")
         cycle = BillingCycleEnum.YEARLY if cycle_value == BillingCycleEnum.YEARLY.value else BillingCycleEnum.MONTHLY
         sub_id = session.get("subscription")
-        await _apply_local_change(
+        await _apply_subscription_change(
             self.db,
             user,
             plan,

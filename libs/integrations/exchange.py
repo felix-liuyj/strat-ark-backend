@@ -1,6 +1,6 @@
 """交易所 REST API 集成（账户信息：连接测试 / 余额 / 权限查询，非下单）。
 
-真实调用，无拟真回退：用明文 api_key + api_secret 经 httpx 调交易所现货私有 REST
+真实调用，无演示数据回退：用明文 api_key + api_secret 经 httpx 调交易所现货私有 REST
 （Binance 风格：``GET /api/v3/account``，``timestamp`` 参数经 HMAC-SHA256 签名，
 请求头带 ``X-MBX-APIKEY``）。权限位读 account 响应的 ``canTrade`` / ``canWithdraw`` /
 ``canDeposit``，余额读 ``balances`` 列表。

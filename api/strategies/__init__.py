@@ -136,7 +136,7 @@ async def update_strategy(
     "/strategies/{strategy_id}/backtest",
     response_model=BaseResponseModel[StrategyBacktestSubmitResponseData],
     summary="提交回测",
-    description="提交策略回测入口（占位回执），真实回测任务在 backtests 域执行。",
+    description="按策略自身交易对与周期创建并执行回测任务，任务结果可在 backtests 域查询。",
     tags=_TAGS,
 )
 async def submit_strategy_backtest(

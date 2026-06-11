@@ -194,7 +194,7 @@ async def restart_bot(
     "/bots/{bot_id}/live-enable",
     response_model=BaseResponseModel[BotLiveEnableResponseData],
     summary="开启实盘（强确认）",
-    description="提交实盘切换，仅返回状态等待风控与 2FA 确认；金额与下单全为模拟，绝不真实下单转账。",
+    description="提交实盘授权；启动实例时仍会校验套餐、2FA、API Key 权限与风控条件。",
     tags=_TAGS,
 )
 async def enable_bot_live(
@@ -210,7 +210,7 @@ async def enable_bot_live(
     "/bots/{bot_id}/trades",
     response_model=BaseResponseModel[list[BotTradeResponseData]],
     summary="机器人交易记录",
-    description="返回机器人历史成交记录（模拟）。",
+    description="运行中机器人从 Freqtrade 实例 REST 返回历史成交记录；停机时返回空列表。",
     tags=_TAGS,
 )
 async def get_bot_trades(
@@ -226,7 +226,7 @@ async def get_bot_trades(
     "/bots/{bot_id}/positions",
     response_model=BaseResponseModel[list[BotPositionResponseData]],
     summary="机器人当前持仓",
-    description="返回机器人当前持仓快照（模拟）。",
+    description="运行中机器人从 Freqtrade 实例 REST 返回当前持仓快照；停机时返回空列表。",
     tags=_TAGS,
 )
 async def get_bot_positions(
@@ -261,7 +261,7 @@ async def get_bot_logs(
     "/bots/{bot_id}/ai-summary",
     response_model=BaseResponseModel[BotAiSummaryResponseData],
     summary="机器人 AI 摘要",
-    description="返回该机器人的 AI 投研摘要与策略信号一致性分析（模拟）。",
+    description="返回该机器人的 TradingAgents AI 投研摘要；未配置 AI 网关时返回明确失败。",
     tags=_TAGS,
 )
 async def get_bot_ai_summary(

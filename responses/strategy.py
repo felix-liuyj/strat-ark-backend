@@ -54,9 +54,9 @@ class StrategyDetailResponseData(StrategyListItemResponseData):
 
 
 class StrategyBacktestSubmitResponseData(ApiResponseModel):
-    """回测入口占位结果（真实回测属 backtests 域）。"""
+    """策略入口创建的回测任务结果。"""
 
-    taskId: str = Field(..., description="回测任务 ID（占位）")
+    taskId: str = Field(..., description="回测任务 ID")
     strategyId: int = Field(..., description="策略 ID")
-    status: str = Field(..., description="任务状态：queued / running")
+    status: str = Field(..., description="任务状态：completed / failed")
     message: str = Field(..., description="提交结果文案")

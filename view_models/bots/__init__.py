@@ -7,7 +7,7 @@ live-enable（强确认语义）/ trades / positions / logs / AI 摘要 / 风控
 编排模式：start 经 freqtrade orchestrator 为该 bot 拉起独立实例容器（配置与凭证经
 ``FREQTRADE__*`` 环境变量注入，交易所明文凭证仅 live 时解密传递、不落盘）；
 trades / positions / logs 走实例自身 REST。编排器未配置或调用失败返回业务错误，
-无 mock 回退。跨模块名称（交易所账户 / 策略）用 select 查询拼接，不使用 ORM relationship。
+无演示数据回退。跨模块名称（交易所账户 / 策略）用 select 查询拼接，不使用 ORM relationship。
 """
 
 import asyncio
@@ -22,8 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from forms.bot import BotCreateForm, BotSettingsUpdateForm, BotUpdateForm
 from libs.auth.permissions import PermissionChecker
 from libs.crypto import decrypt_text, encrypt_text
-from libs.integrations import agent as agent_service
 from libs.integrations import freqtrade as freqtrade_service
+from libs.integrations import trading_agents
 from libs.integrations.freqtrade import FreqtradeUnavailableError
 from models.account import PlanEnum
 from models.bot import Bot, BotRunModeEnum, BotStatusEnum, BotTradeModeEnum
@@ -116,6 +116,49 @@ def _parse_pct(value: str) -> float | None:
         return float(raw) / 100
     except ValueError:
         return None
+
+
+def _parse_percent_value(value: str, default: float) -> float:
+    parsed = _parse_pct(value)
+    return abs(parsed * 100) if parsed is not None else default
+
+
+def _parse_number_value(value: str, default: float) -> float:
+    raw = (value or "").strip().rstrip("x").rstrip("%").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _risk_row(label: str, current: float, limit: float, unit: str) -> BotRiskRowResponseData:
+    safe = current <= limit if limit > 0 else current == 0
+    pct = round(min(max(current / limit * 100 if limit > 0 else 0.0, 0.0), 100.0), 2)
+    return BotRiskRowResponseData(
+        label=label,
+        valuePct=pct,
+        valueLabel=f"{current:g}{unit} / {limit:g}{unit}",
+        safe=safe,
+    )
+
+
+def _loss_streak(trades: list[freqtrade_service.TradeRecord]) -> int:
+    count = 0
+    for trade in trades:
+        if trade.pnl_pct >= 0:
+            break
+        count += 1
+    return count
+
+
+def _risk_overall(rows: list[BotRiskRowResponseData]) -> str:
+    if any(not row.safe for row in rows):
+        return "Critical"
+    if any(row.valuePct >= 80 for row in rows):
+        return "Warning"
+    return "Normal"
 
 
 async def _two_factor_state(db: AsyncSession, user_id: int) -> dict:
@@ -682,7 +725,7 @@ class EnableBotLiveViewModel(_AuthedBotViewModel):
 
 
 class GetBotTradesViewModel(_AuthedBotViewModel):
-    """交易记录（service mock）。"""
+    """交易记录（运行中实例走真实 Freqtrade REST）。"""
 
     def __init__(self, request: Request, db: AsyncSession, checker: PermissionChecker, bot_id: int) -> None:
         super().__init__(request=request, db=db, checker=checker)
@@ -726,7 +769,7 @@ class GetBotTradesViewModel(_AuthedBotViewModel):
 
 
 class GetBotPositionsViewModel(_AuthedBotViewModel):
-    """当前持仓（service mock）。"""
+    """当前持仓（运行中实例走真实 Freqtrade REST）。"""
 
     def __init__(self, request: Request, db: AsyncSession, checker: PermissionChecker, bot_id: int) -> None:
         super().__init__(request=request, db=db, checker=checker)
@@ -768,7 +811,7 @@ class GetBotPositionsViewModel(_AuthedBotViewModel):
 
 
 class GetBotLogsViewModel(_AuthedBotViewModel):
-    """Freqtrade 原始日志（service mock，可按级别筛选）。"""
+    """Freqtrade 原始日志（运行中实例走真实 Freqtrade REST）。"""
 
     def __init__(
         self,
@@ -812,7 +855,7 @@ class GetBotLogsViewModel(_AuthedBotViewModel):
 
 
 class GetBotAiSummaryViewModel(_AuthedBotViewModel):
-    """AI 投研摘要 + 信号一致性（agent service mock）。"""
+    """AI 投研摘要 + 信号一致性（TradingAgents 网关）。"""
 
     def __init__(self, request: Request, db: AsyncSession, checker: PermissionChecker, bot_id: int) -> None:
         super().__init__(request=request, db=db, checker=checker)
@@ -826,28 +869,36 @@ class GetBotAiSummaryViewModel(_AuthedBotViewModel):
             self.not_found("机器人不存在")
             return
 
-        summary = agent_service.generate_bot_summary(bot.name, bot.pairs)
-        alignment = summary.alignment
+        symbol = str((bot.pairs or ["BTC/USDT"])[0])
+        gateway = trading_agents.resolve_gateway_config(
+            await get_engine_connection_config(self.db, EngineKindEnum.TRADINGAGENTS)
+        )
+        try:
+            summary = await trading_agents.run_market_analysis(symbol, bot.timeframe, gateway=gateway)
+        except trading_agents.GatewayUnavailableError as exc:
+            self.operating_failed(str(exc))
+            return
+        headline = summary.summary.split("。", 1)[0].strip() or summary.summary[:80]
         self.operating_successfully(
             BotAiSummaryResponseData(
-                trend=summary.trend,
-                headline=summary.headline,
-                narrative=summary.narrative,
+                trend=summary.market_state,
+                headline=headline,
+                narrative=summary.summary,
                 alignment=BotSignalAlignmentResponseData(
-                    aiRecommendation=alignment.ai_recommendation,
-                    aiConfidence=alignment.ai_confidence,
-                    strategySignal=alignment.strategy_signal,
-                    botDirection=alignment.bot_direction,
-                    aligned=alignment.aligned,
-                    riskLevel=alignment.risk_level,
-                    suggestedAction=alignment.suggested_action,
+                    aiRecommendation=summary.signal,
+                    aiConfidence=summary.confidence,
+                    strategySignal="unavailable",
+                    botDirection=str(bot.run_mode),
+                    aligned=False,
+                    riskLevel=summary.risk_level,
+                    suggestedAction="策略实时信号源未接入，仅展示 AI 研判",
                 ),
             )
         )
 
 
 class GetBotRiskStatusViewModel(_AuthedBotViewModel):
-    """机器人风控状态（各限额占用，mock 拟真）。"""
+    """机器人风控状态（阈值来自 Bot 配置，运行数据来自 Freqtrade 实例）。"""
 
     def __init__(self, request: Request, db: AsyncSession, checker: PermissionChecker, bot_id: int) -> None:
         super().__init__(request=request, db=db, checker=checker)
@@ -861,11 +912,32 @@ class GetBotRiskStatusViewModel(_AuthedBotViewModel):
             self.not_found("机器人不存在")
             return
 
+        daily_profit = 0.0
+        positions: list[freqtrade_service.PositionSnapshot] = []
+        trades: list[freqtrade_service.TradeRecord] = []
+        creds = _instance_credentials(bot)
+        if bot.status == BotStatusEnum.RUNNING and creds is not None:
+            try:
+                daily_profit = await freqtrade_service.fetch_daily_profit_pct(creds)
+                positions = await freqtrade_service.fetch_positions(creds)
+                trades = await freqtrade_service.fetch_trades(creds)
+            except FreqtradeUnavailableError as exc:
+                self.operating_failed(str(exc))
+                return
+
+        loss = max(-daily_profit, 0.0)
+        daily_limit = _parse_percent_value(bot.daily_loss_limit, 3.0)
+        drawdown_limit = _parse_percent_value(bot.max_drawdown_limit, 10.0)
+        position_limit = _parse_percent_value(bot.max_position, 5.0)
+        leverage_limit = _parse_number_value(bot.max_leverage, 3.0)
+        capacity = max(bot.stake_amount, 1.0)
+        exposure = max((p.value_usdt / capacity * 100 for p in positions), default=0.0)
+        streak = float(_loss_streak(trades))
         rows = [
-            BotRiskRowResponseData(label="botDetail.dailyLoss", valuePct=40.0, valueLabel="1.2% / 3%", safe=True),
-            BotRiskRowResponseData(label="botDetail.maxDrawdown", valuePct=62.0, valueLabel="6.2% / 10%", safe=False),
-            BotRiskRowResponseData(label="botDetail.singleExposure", valuePct=82.0, valueLabel="4.1% / 5%", safe=False),
-            BotRiskRowResponseData(label="botDetail.losingStreak", valuePct=33.0, valueLabel="1 / 3", safe=True),
-            BotRiskRowResponseData(label="botDetail.leverage", valuePct=33.0, valueLabel="1x / 3x", safe=True),
+            _risk_row("botDetail.dailyLoss", loss, daily_limit, "%"),
+            _risk_row("botDetail.maxDrawdown", 0.0, drawdown_limit, "%"),
+            _risk_row("botDetail.singleExposure", round(exposure, 4), position_limit, "%"),
+            _risk_row("botDetail.losingStreak", streak, 3.0, ""),
+            _risk_row("botDetail.leverage", 0.0, leverage_limit, "x"),
         ]
-        self.operating_successfully(BotRiskStatusResponseData(overall="Normal", rows=rows))
+        self.operating_successfully(BotRiskStatusResponseData(overall=_risk_overall(rows), rows=rows))

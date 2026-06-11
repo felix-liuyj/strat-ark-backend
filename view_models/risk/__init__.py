@@ -1,7 +1,7 @@
 """风控中心视图模型。
 
-风险总览 / 分层卡来自风控引擎 service（拟真）；风控规则与触发记录读写数据库。
-规则列表为空时回落到 service 提供的默认规则集（只读，不隐式落库，避免 GET 写库）。
+风险总览 / 分层卡 / 触发记录均来自用户真实数据；风控规则列表为空时返回默认阈值
+（只读，不隐式落库，避免 GET 写库），但当前值来自真实数据或置 0。
 """
 
 from fastapi import Request
@@ -15,8 +15,9 @@ from forms.risk import (
     RiskRuleUpdateForm,
 )
 from libs.auth.permissions import PermissionChecker
-from libs.integrations import risk_engine
+from models.bot import Bot
 from models.risk import RiskEvent, RiskEventLevelEnum, RiskRule, RiskRuleScopeEnum, RiskRuleTypeEnum
+from models.trade import Position
 from responses.risk import (
     RiskEventResponseData,
     RiskLevelCardResponseData,
@@ -42,11 +43,11 @@ __all__ = (
 # 元组列：(scope, rule_type, label, current_value, limit_value, unit)。
 _DefaultRule = tuple[RiskRuleScopeEnum, RiskRuleTypeEnum, str, float | None, float | None, str]
 _DEFAULT_RULES: list[_DefaultRule] = [
-    (RiskRuleScopeEnum.ACCOUNT, RiskRuleTypeEnum.DAILY_LOSS_LIMIT, "risk.ruleDailyLoss", 1.2, 3.0, "%"),
-    (RiskRuleScopeEnum.ACCOUNT, RiskRuleTypeEnum.MAX_DRAWDOWN, "risk.ruleMaxDrawdown", 6.2, 10.0, "%"),
-    (RiskRuleScopeEnum.SYMBOL, RiskRuleTypeEnum.MAX_POSITION_SIZE, "risk.ruleMaxPosition", 4.1, 5.0, "%"),
-    (RiskRuleScopeEnum.ORDER, RiskRuleTypeEnum.MAX_LEVERAGE, "risk.ruleMaxLeverage", 1.0, 3.0, "x"),
-    (RiskRuleScopeEnum.STRATEGY, RiskRuleTypeEnum.COOLDOWN, "risk.ruleCooldown", 1.0, 3.0, ""),
+    (RiskRuleScopeEnum.ACCOUNT, RiskRuleTypeEnum.DAILY_LOSS_LIMIT, "risk.ruleDailyLoss", 0.0, 3.0, "%"),
+    (RiskRuleScopeEnum.ACCOUNT, RiskRuleTypeEnum.MAX_DRAWDOWN, "risk.ruleMaxDrawdown", 0.0, 10.0, "%"),
+    (RiskRuleScopeEnum.SYMBOL, RiskRuleTypeEnum.MAX_POSITION_SIZE, "risk.ruleMaxPosition", 0.0, 5.0, "%"),
+    (RiskRuleScopeEnum.ORDER, RiskRuleTypeEnum.MAX_LEVERAGE, "risk.ruleMaxLeverage", 0.0, 3.0, "x"),
+    (RiskRuleScopeEnum.STRATEGY, RiskRuleTypeEnum.COOLDOWN, "risk.ruleCooldown", 0.0, 3.0, ""),
     (RiskRuleScopeEnum.SIGNAL, RiskRuleTypeEnum.NEWS_FILTER, "risk.ruleNews", None, None, ""),
     (RiskRuleScopeEnum.SIGNAL, RiskRuleTypeEnum.VOLATILITY_FILTER, "risk.ruleVolatility", None, None, ""),
     (RiskRuleScopeEnum.SYMBOL, RiskRuleTypeEnum.LIQUIDITY_FILTER, "risk.ruleLiquidity", None, None, ""),
@@ -64,48 +65,7 @@ _DEFAULT_LEVELS: list[_DefaultLevel] = [
     (RiskRuleScopeEnum.SIGNAL, "risk.levelSignal", "risk.levelSignalSub", "run", "status.normal"),
 ]
 
-# 默认触发记录（事件表为空时只读回落，与前端 EVENTS 五条对齐）。
-# 元组列：(level, scope, rule_type, title, description, symbol, occurred_at)。
-_DefaultEvent = tuple[RiskEventLevelEnum, RiskRuleScopeEnum, RiskRuleTypeEnum | None, str, str, str | None, str]
-_DEFAULT_EVENTS: list[_DefaultEvent] = [
-    (
-        RiskEventLevelEnum.WARN,
-        RiskRuleScopeEnum.SYMBOL,
-        RiskRuleTypeEnum.VOLATILITY_FILTER,
-        "risk.evVolatility",
-        "risk.evVolatilityDesc",
-        "SOL/USDT",
-        "08:15",
-    ),
-    (
-        RiskEventLevelEnum.DANGER,
-        RiskRuleScopeEnum.SIGNAL,
-        None,
-        "risk.evRejected",
-        "risk.evRejectedDesc",
-        "DOGE/USDT",
-        "08:50",
-    ),
-    (
-        RiskEventLevelEnum.WARN,
-        RiskRuleScopeEnum.SYMBOL,
-        RiskRuleTypeEnum.MAX_POSITION_SIZE,
-        "risk.evExposure",
-        "risk.evExposureDesc",
-        "BTC/USDT",
-        "09:30",
-    ),
-    (
-        RiskEventLevelEnum.SUCCESS,
-        RiskRuleScopeEnum.ORDER,
-        None,
-        "risk.evApproved",
-        "risk.evApprovedDesc",
-        "BTC/USDT",
-        "10:28",
-    ),
-    (RiskEventLevelEnum.INFO, RiskRuleScopeEnum.ACCOUNT, None, "risk.evScan", "risk.evScanDesc", None, "10:00"),
-]
+_TOTAL_EXPOSURE_LIMIT = 60.0
 
 
 def _rule_to_response(rule: RiskRule) -> RiskRuleResponseData:
@@ -159,20 +119,102 @@ def _event_to_response(event: RiskEvent) -> RiskEventResponseData:
     )
 
 
-def _default_event_to_response(index: int, item: _DefaultEvent) -> RiskEventResponseData:
-    level, scope, rule_type, title, description, symbol, occurred_at = item
-    return RiskEventResponseData(
-        id=-(index + 1),
-        level=level,
-        scope=scope,
-        ruleType=rule_type,
-        title=title,
-        description=description,
-        symbol=symbol,
-        actionTaken=None,
-        resolved=False,
-        occurredAt=occurred_at,
+async def _rule_limit(
+    db: AsyncSession,
+    user_id: int,
+    rule_type: RiskRuleTypeEnum,
+    default: float,
+) -> float:
+    value = await db.scalar(
+        select(RiskRule.limit_value).where(
+            RiskRule.user_id == user_id,
+            RiskRule.rule_type == rule_type,
+            RiskRule.enabled.is_(True),
+            RiskRule.limit_value.is_not(None),
+        )
     )
+    return float(value) if value is not None else default
+
+
+async def _rule_current(db: AsyncSession, user_id: int, rule_type: RiskRuleTypeEnum) -> float:
+    value = await db.scalar(
+        select(RiskRule.current_value).where(
+            RiskRule.user_id == user_id,
+            RiskRule.rule_type == rule_type,
+            RiskRule.enabled.is_(True),
+            RiskRule.current_value.is_not(None),
+        )
+    )
+    return float(value) if value is not None else 0.0
+
+
+async def _position_exposure_pct(db: AsyncSession, user_id: int) -> float:
+    exposure = await db.scalar(
+        select(func.coalesce(func.sum(Position.position_value), 0.0)).where(Position.user_id == user_id)
+    )
+    capacity = await db.scalar(
+        select(func.coalesce(func.sum(Bot.stake_amount * Bot.max_open_trades), 0.0)).where(Bot.user_id == user_id)
+    )
+    if not capacity:
+        return 0.0
+    return round(float(exposure or 0.0) / float(capacity) * 100, 4)
+
+
+async def _build_overview_metrics(db: AsyncSession, user_id: int) -> list[RiskMetricResponseData]:
+    daily_loss_limit = await _rule_limit(db, user_id, RiskRuleTypeEnum.DAILY_LOSS_LIMIT, 3.0)
+    drawdown_limit = await _rule_limit(db, user_id, RiskRuleTypeEnum.MAX_DRAWDOWN, 10.0)
+    return [
+        RiskMetricResponseData(
+            key="daily_loss",
+            label="risk.todayLoss",
+            current=await _rule_current(db, user_id, RiskRuleTypeEnum.DAILY_LOSS_LIMIT),
+            limit=daily_loss_limit,
+            unit="%",
+        ),
+        RiskMetricResponseData(
+            key="drawdown",
+            label="risk.accountDrawdown",
+            current=await _rule_current(db, user_id, RiskRuleTypeEnum.MAX_DRAWDOWN),
+            limit=drawdown_limit,
+            unit="%",
+        ),
+        RiskMetricResponseData(
+            key="exposure",
+            label="risk.totalExposure",
+            current=await _position_exposure_pct(db, user_id),
+            limit=_TOTAL_EXPOSURE_LIMIT,
+            unit="%",
+        ),
+    ]
+
+
+async def _scopes_with_events(
+    db: AsyncSession, user_id: int, level: RiskEventLevelEnum
+) -> set[RiskRuleScopeEnum]:
+    rows = await db.scalars(
+        select(RiskEvent.scope).where(
+            RiskEvent.user_id == user_id,
+            RiskEvent.resolved.is_(False),
+            RiskEvent.level == level,
+        )
+    )
+    return {RiskRuleScopeEnum(scope) for scope in rows.all()}
+
+
+def _level_status(
+    scope: RiskRuleScopeEnum,
+    danger_scopes: set[RiskRuleScopeEnum],
+    warn_scopes: set[RiskRuleScopeEnum],
+) -> str:
+    return "warn" if scope in danger_scopes or scope in warn_scopes else "run"
+
+
+def _level_status_label(
+    scope: RiskRuleScopeEnum,
+    danger_scopes: set[RiskRuleScopeEnum],
+    warn_scopes: set[RiskRuleScopeEnum],
+) -> str:
+    return "status.watch" if scope in danger_scopes or scope in warn_scopes else "status.normal"
 
 
 class RiskOverviewViewModel(BaseViewModel):
@@ -187,10 +229,8 @@ class RiskOverviewViewModel(BaseViewModel):
         await super().before()
         self.checker.require_auth()
         user_id = int(self.checker.user_id)
-        overview = risk_engine.get_risk_overview()
 
         # 待处理告警数取用户真实未处理风控事件计数；总体状态由是否存在未处理高危事件派生
-        # （关键指标 daily_loss / drawdown / exposure 仍由引擎给出，属交易派生的实时口径）。
         pending_alerts = (
             await self.db.scalar(
                 select(func.count())
@@ -214,15 +254,14 @@ class RiskOverviewViewModel(BaseViewModel):
         elif pending_alerts:
             overall_status = "warning"
         else:
-            overall_status = overview.overall_status
+            overall_status = "normal"
+
+        metrics = await _build_overview_metrics(self.db, user_id)
 
         data = RiskOverviewResponseData(
             overallStatus=overall_status,
             pendingAlerts=int(pending_alerts),
-            metrics=[
-                RiskMetricResponseData(key=m.key, label=m.label, current=m.current, limit=m.limit, unit=m.unit)
-                for m in overview.metrics
-            ],
+            metrics=metrics,
         )
         self.operating_successfully(data)
 
@@ -230,22 +269,26 @@ class RiskOverviewViewModel(BaseViewModel):
 class ListRiskLevelsViewModel(BaseViewModel):
     """风控分层卡列表（账户 / Bot / 策略 / 持仓 / 订单 / AI 信号级）。"""
 
-    def __init__(self, request: Request, checker: PermissionChecker) -> None:
+    def __init__(self, request: Request, db: AsyncSession, checker: PermissionChecker) -> None:
         super().__init__(request=request)
+        self.db = db
         self.checker = checker
 
     async def before(self) -> None:
         await super().before()
         self.checker.require_auth()
+        user_id = int(self.checker.user_id)
+        danger_scopes = await _scopes_with_events(self.db, user_id, RiskEventLevelEnum.DANGER)
+        warn_scopes = await _scopes_with_events(self.db, user_id, RiskEventLevelEnum.WARN)
         cards = [
             RiskLevelCardResponseData(
                 scope=scope,
                 title=title,
                 subtitle=subtitle,
-                status=status,
-                statusLabel=status_label,
+                status=_level_status(scope, danger_scopes, warn_scopes),
+                statusLabel=_level_status_label(scope, danger_scopes, warn_scopes),
             )
-            for scope, title, subtitle, status, status_label in _DEFAULT_LEVELS
+            for scope, title, subtitle, _status, _status_label in _DEFAULT_LEVELS
         ]
         self.operating_successfully(cards)
 
@@ -274,7 +317,7 @@ class ListRiskRulesViewModel(BaseViewModel):
 
 
 class ListRiskEventsViewModel(BaseViewModel):
-    """风控触发记录列表（DB 为空时只读回落默认事件集）。"""
+    """风控触发记录列表。"""
 
     def __init__(self, request: Request, db: AsyncSession, checker: PermissionChecker) -> None:
         super().__init__(request=request)
@@ -289,11 +332,7 @@ class ListRiskEventsViewModel(BaseViewModel):
                 select(RiskEvent).where(RiskEvent.user_id == int(self.checker.user_id)).order_by(RiskEvent.id.desc())
             )
         ).all()
-        if events:
-            self.operating_successfully([_event_to_response(e) for e in events])
-            return
-        defaults = [_default_event_to_response(i, item) for i, item in enumerate(_DEFAULT_EVENTS)]
-        self.operating_successfully(defaults)
+        self.operating_successfully([_event_to_response(e) for e in events])
 
 
 class CreateRiskRuleViewModel(BaseViewModel):
@@ -401,7 +440,14 @@ class UpdateRiskRulesBulkViewModel(BaseViewModel):
                 "%",
                 True,
             ),
-            (RiskRuleScopeEnum.ACCOUNT, RiskRuleTypeEnum.MAX_DRAWDOWN, "risk.ruleMaxDrawdown", form.maxDrawdown, "%", True),
+            (
+                RiskRuleScopeEnum.ACCOUNT,
+                RiskRuleTypeEnum.MAX_DRAWDOWN,
+                "risk.ruleMaxDrawdown",
+                form.maxDrawdown,
+                "%",
+                True,
+            ),
             (
                 RiskRuleScopeEnum.SYMBOL,
                 RiskRuleTypeEnum.MAX_POSITION_SIZE,
@@ -410,7 +456,14 @@ class UpdateRiskRulesBulkViewModel(BaseViewModel):
                 "%",
                 True,
             ),
-            (RiskRuleScopeEnum.ORDER, RiskRuleTypeEnum.MAX_LEVERAGE, "risk.ruleMaxLeverage", form.maxLeverage, "x", True),
+            (
+                RiskRuleScopeEnum.ORDER,
+                RiskRuleTypeEnum.MAX_LEVERAGE,
+                "risk.ruleMaxLeverage",
+                form.maxLeverage,
+                "x",
+                True,
+            ),
             (
                 RiskRuleScopeEnum.STRATEGY,
                 RiskRuleTypeEnum.COOLDOWN,
@@ -419,7 +472,14 @@ class UpdateRiskRulesBulkViewModel(BaseViewModel):
                 "",
                 True,
             ),
-            (RiskRuleScopeEnum.STRATEGY, RiskRuleTypeEnum.COOLDOWN, "risk.ruleCooldownHours", form.cooldownHours, "h", True),
+            (
+                RiskRuleScopeEnum.STRATEGY,
+                RiskRuleTypeEnum.COOLDOWN,
+                "risk.ruleCooldownHours",
+                form.cooldownHours,
+                "h",
+                True,
+            ),
             (RiskRuleScopeEnum.SIGNAL, RiskRuleTypeEnum.NEWS_FILTER, "risk.ruleNews", None, "", form.newsFilter),
             (
                 RiskRuleScopeEnum.SYMBOL,

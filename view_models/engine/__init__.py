@@ -1,6 +1,6 @@
 """引擎管理 view models（管理员专属）。
 
-覆盖：引擎列表、监控聚合（service stub 读 K8s）、连接配置读写（凭证掩码）、部署配置读写、
+覆盖：引擎列表、监控聚合、连接配置读写（凭证掩码）、部署配置读写、
 运维操作执行（engine_ops 记录 + 危险操作写平台审计）、运维流水查询。
 """
 
@@ -103,6 +103,16 @@ def _service_url(config: dict[str, Any] | None) -> str:
     return str(cfg.get("serviceUrl") or cfg.get("orchestratorUrl") or "")
 
 
+def _service_token(config: dict[str, Any] | None) -> str:
+    cfg = config or {}
+    return str(cfg.get("token") or cfg.get("restApiToken") or cfg.get("orchestratorToken") or "")
+
+
+def _control_path(config: dict[str, Any] | None, key: str, fallback: str = "") -> str:
+    cfg = config or {}
+    return str(cfg.get(key) or fallback)
+
+
 def _mask_config(config: dict[str, Any]) -> dict[str, Any]:
     """对配置中的敏感字段做掩码，避免明文回显。"""
     masked: dict[str, Any] = {}
@@ -191,7 +201,7 @@ class ListEnginesViewModel(_AdminEngineViewModel):
 
 
 class GetEngineMonitorViewModel(_AdminEngineViewModel):
-    """引擎监控聚合（service stub 读 K8s）。"""
+    """引擎监控聚合（服务连接状态 + 真实端点数据）。"""
 
     def __init__(
         self,
@@ -358,19 +368,28 @@ class UpdateEngineDeploymentViewModel(_AdminEngineViewModel):
 
 
 # 运维操作类型 → 引擎服务连接调用（经引擎暴露的控制 API；test_connection 探 serviceUrl）。
-def _dispatch_op(op_type: EngineOpTypeEnum, engine_key: str, service_url: str) -> engine_runtime.EngineOpResult:
+def _dispatch_op(
+    op_type: EngineOpTypeEnum,
+    engine_key: str,
+    config: dict[str, Any],
+) -> engine_runtime.EngineOpResult:
+    service_url = _service_url(config)
+    token = _service_token(config)
     if op_type == EngineOpTypeEnum.RESTART:
-        return engine_runtime.trigger_restart(engine_key)
+        return engine_runtime.trigger_restart(engine_key, service_url, token, _control_path(config, "restartPath"))
     if op_type == EngineOpTypeEnum.RELOAD:
-        return engine_runtime.reload_engine(engine_key)
+        path = _control_path(config, "reloadPath", "/api/v1/reload_config")
+        return engine_runtime.reload_engine(engine_key, service_url, token, path)
     if op_type == EngineOpTypeEnum.DRAIN:
-        return engine_runtime.drain_engine(engine_key)
+        return engine_runtime.drain_engine(engine_key, service_url, token, _control_path(config, "drainPath"))
     if op_type == EngineOpTypeEnum.CLEAR_QUEUE:
-        return engine_runtime.reload_engine(engine_key)
+        path = _control_path(config, "clearQueuePath")
+        return engine_runtime.clear_queue_engine(engine_key, service_url, token, path)
     if op_type == EngineOpTypeEnum.EMERGENCY_STOP:
-        return engine_runtime.emergency_stop_engine(engine_key)
+        path = _control_path(config, "stopPath", "/api/v1/stop")
+        return engine_runtime.emergency_stop_engine(engine_key, service_url, token, path)
     if op_type == EngineOpTypeEnum.TEAR_DOWN:
-        return engine_runtime.tear_down_engine(engine_key)
+        return engine_runtime.tear_down_engine(engine_key, service_url, token, _control_path(config, "tearDownPath"))
     return engine_runtime.test_connection(engine_key, service_url)
 
 
@@ -399,9 +418,14 @@ class ExecuteEngineOpViewModel(_AdminEngineViewModel):
         op_type = self.form.opType
         engine = await self._get_or_seed_engine(self.engine_kind)
         service_url = _service_url(engine.connection_config)
-        result = _dispatch_op(op_type, str(self.engine_kind), service_url)
+        result = _dispatch_op(op_type, str(self.engine_kind), engine.connection_config or {})
 
-        detail: dict[str, Any] = {}
+        detail: dict[str, Any] = {
+            "serviceUrl": service_url,
+            "operation": result.operation,
+            "runtimeStatus": result.runtime_status,
+            "executedAt": result.executed_at.isoformat(),
+        }
 
         op_status = EngineOpStatusEnum.SUCCESS if result.ok else EngineOpStatusEnum.FAILED
         op = EngineOp(

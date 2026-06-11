@@ -26,9 +26,9 @@ class CreateApiKeyForm(ApiFormModel):
 
 
 class BindOAuthForm(ApiFormModel):
-    """绑定第三方账号（模拟，不发起真实 OAuth 授权）。
+    """绑定第三方账号。
 
-    accountLabel 为该第三方账号的展示标识（邮箱 / 用户名）。
+    当前绑定必须经真实 OAuth 授权码回调完成；直接提交 provider 不会落库绑定。
     """
 
     provider: OAuthProviderEnum = Body(..., embed=True, description="提供方：google / microsoft / github / apple")
