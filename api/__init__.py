@@ -12,6 +12,7 @@ from api.dashboard import router as dashboard_router
 from api.engine import router as engine_router
 from api.exchanges import router as exchanges_router
 from api.market import router as market_router
+from api.navigation import router as navigation_router
 from api.notification import router as notification_router
 from api.risk import router as risk_router
 from api.settings import router as settings_router
@@ -27,6 +28,7 @@ api_router = APIRouter()
 api_router.include_router(common_router)
 api_router.include_router(auth_router)
 api_router.include_router(dashboard_router)
+api_router.include_router(navigation_router)
 api_router.include_router(exchanges_router)
 api_router.include_router(bots_router)
 api_router.include_router(strategies_router)

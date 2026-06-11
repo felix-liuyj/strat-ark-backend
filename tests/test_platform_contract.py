@@ -30,6 +30,7 @@ REQUIRED_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/common/oss/presign"),
     ("POST", "/common/oss/confirm"),
     ("GET", "/dashboard/overview"),
+    ("GET", "/navigation/counts"),
     ("GET", "/exchanges"),
     ("POST", "/exchanges"),
     ("POST", "/exchanges/test"),
