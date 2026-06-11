@@ -78,7 +78,7 @@ class DashboardBotResponseData(ApiResponseModel):
     subtitle: str = Field(..., description="策略 / 交易所 / 周期")
     status: str = Field(..., description="状态")
     pnlLabel: str = Field(..., description="收益展示")
-    positionsLabelKey: str = Field(..., description="持仓展示 i18n key")
+    positionsCount: int = Field(..., description="当前持仓数量")
 
 
 class DashboardSignalResponseData(ApiResponseModel):

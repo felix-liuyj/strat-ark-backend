@@ -1,8 +1,10 @@
 """Dashboard API 路由。"""
 
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.auth.permissions import PermissionChecker, get_permission_checker
+from libs.ctrl.db import get_db
 from libs.response import BaseResponseModel, create_response
 from responses.dashboard import DashboardOverviewResponseData
 from view_models.dashboard import GetDashboardOverviewViewModel
@@ -22,5 +24,6 @@ router = APIRouter()
 async def get_dashboard_overview(
     request: Request,
     checker: PermissionChecker = Depends(get_permission_checker),
+    db: AsyncSession = Depends(get_db),
 ) -> BaseResponseModel:
-    return await create_response(GetDashboardOverviewViewModel, request, checker=checker)
+    return await create_response(GetDashboardOverviewViewModel, request, db, checker=checker)
