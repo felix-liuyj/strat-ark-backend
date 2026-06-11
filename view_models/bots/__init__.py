@@ -73,8 +73,8 @@ _DEFAULT_RISK_CONFIG: dict[str, bool] = {
 }
 
 
-def _format_pnl(pct: float) -> str:
-    if pct == 0:
+def _format_pnl(pct: float | None) -> str:
+    if pct is None or pct == 0:
         return "—"
     sign = "+" if pct > 0 else ""
     return f"{sign}{pct:g}%"
@@ -229,10 +229,14 @@ async def _resolve_names(db: AsyncSession, bot: Bot) -> tuple[str, str]:
 
 
 def _build_list_item(
-    bot: Bot, exchange_name: str, strategy_name: str, *, today_pnl: float = 0.0, positions: int = 0
+    bot: Bot,
+    exchange_name: str,
+    strategy_name: str,
+    *,
+    today_pnl: float | None = None,
+    positions: int | None = None,
 ) -> BotListItemResponseData:
-    # 列表页轻量化：运行时指标（今日收益 / 持仓数）默认占位 0 / —，
-    # 真实数据在详情页经实例 REST 拉取（列表逐 bot 探实例代价过高）。
+    # 列表页运行时指标只采用实例 REST 实际返回；不可达时返回空值，前端显示缺省。
     return BotListItemResponseData(
         id=bot.id,
         name=bot.name,
@@ -245,7 +249,7 @@ def _build_list_item(
         exchangeName=exchange_name,
         todayPnlPct=today_pnl,
         todayPnlLabel=_format_pnl(today_pnl),
-        pnlPositive=today_pnl > 0,
+        pnlPositive=today_pnl is not None and today_pnl > 0,
         positions=positions,
         pairs=bot.pairs,
     )
@@ -290,7 +294,7 @@ class _AuthedBotViewModel(BaseViewModel):
 
 
 class ListBotsViewModel(_AuthedBotViewModel):
-    """机器人列表（仅本人）。运行中 bot 并发拉实例当日收益 / 持仓数填充，实例不可达降级占位。"""
+    """机器人列表（仅本人）。运行中 bot 并发拉实例当日收益 / 持仓数填充，实例不可达返回空值。"""
 
     async def before(self) -> None:
         await super().before()
@@ -304,7 +308,7 @@ class ListBotsViewModel(_AuthedBotViewModel):
         items: list[BotListItemResponseData] = []
         for bot in bots:
             exchange_name, strategy_name = await _resolve_names(self.db, bot)
-            pnl, positions = metrics.get(bot.id, (0.0, 0))
+            pnl, positions = metrics.get(bot.id, (None, None))
             items.append(
                 _build_list_item(bot, exchange_name, strategy_name, today_pnl=pnl, positions=positions)
             )
@@ -312,7 +316,7 @@ class ListBotsViewModel(_AuthedBotViewModel):
 
     @staticmethod
     async def _collect_metrics(bots: list[Bot]) -> dict[int, tuple[float, int]]:
-        """并发拉取运行中 bot 的实例当日收益与持仓数；单实例失败降级为占位 (0, 0)。"""
+        """并发拉取运行中 bot 的实例当日收益与持仓数；单实例失败则不返回该指标。"""
         targets = [
             (bot, creds)
             for bot in bots
@@ -331,7 +335,8 @@ class ListBotsViewModel(_AuthedBotViewModel):
         results = await asyncio.gather(*(_one(c) for _, c in targets), return_exceptions=True)
         metrics: dict[int, tuple[float, int]] = {}
         for (bot, _), result in zip(targets, results, strict=True):
-            metrics[bot.id] = result if not isinstance(result, BaseException) else (0.0, 0)
+            if not isinstance(result, BaseException):
+                metrics[bot.id] = result
         return metrics
 
 
@@ -869,7 +874,10 @@ class GetBotAiSummaryViewModel(_AuthedBotViewModel):
             self.not_found("机器人不存在")
             return
 
-        symbol = str((bot.pairs or ["BTC/USDT"])[0])
+        if not bot.pairs:
+            self.illegal_parameters("机器人未配置交易对，无法生成 AI 摘要")
+            return
+        symbol = str(bot.pairs[0])
         gateway = trading_agents.resolve_gateway_config(
             await get_engine_connection_config(self.db, EngineKindEnum.TRADINGAGENTS)
         )

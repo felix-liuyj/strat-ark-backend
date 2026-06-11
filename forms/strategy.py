@@ -14,6 +14,7 @@ __all__ = (
 
 class StrategyCreateForm(ApiFormModel):
     name: str = Body(..., embed=True, description="策略名称，例如 My Trend V1")
+    description: str | None = Body(None, embed=True, description="策略描述")
     strategyType: StrategyTypeEnum = Body(
         ..., embed=True, description="类型：trend / mean_reversion / breakout / ai_assisted / risk_guard"
     )
@@ -24,6 +25,7 @@ class StrategyCreateForm(ApiFormModel):
 
 class StrategyUpdateForm(ApiFormModel):
     name: str | None = Body(None, embed=True, description="策略名称")
+    description: str | None = Body(None, embed=True, description="策略描述")
     timeframe: str | None = Body(None, embed=True, description="周期")
     market: str | None = Body(None, embed=True, description="适用市场描述")
     params: list[list[str]] | None = Body(None, embed=True, description="有序参数键值对列表")

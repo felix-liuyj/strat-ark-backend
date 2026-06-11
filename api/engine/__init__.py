@@ -56,7 +56,7 @@ async def list_engines(
     "/engines/{engine_kind}/monitor",
     response_model=BaseResponseModel[EngineMonitorResponseData],
     summary="获取引擎监控",
-    description="仅管理员可访问。返回指定引擎的服务连接状态、真实指标占位为空值、依赖与日志集合。",
+    description="仅管理员可访问。返回指定引擎的服务连接状态、真实指标、依赖与日志集合；实例不可达时返回空集合或空值。",
     tags=_TAGS,
 )
 async def get_engine_monitor(

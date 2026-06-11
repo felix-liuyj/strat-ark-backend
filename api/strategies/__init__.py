@@ -49,7 +49,7 @@ async def list_strategies(
     "/strategies",
     response_model=BaseResponseModel[StrategyDetailResponseData],
     summary="新建策略",
-    description="创建用户私有策略并生成初始 v1.0 版本记录与源码占位。",
+    description="创建用户私有策略并生成初始 v1.0 版本记录与参数化源码预览。",
     tags=_TAGS,
 )
 async def create_strategy(
@@ -117,7 +117,7 @@ async def get_strategy_detail(
     "/strategies/{strategy_id}",
     response_model=BaseResponseModel[StrategyDetailResponseData],
     summary="更新策略参数",
-    description="更新用户私有策略的名称、周期、参数；内置策略只读不可修改。",
+    description="更新用户私有策略的名称、描述、周期、市场与参数；内置策略只读不可修改。",
     tags=_TAGS,
 )
 async def update_strategy(

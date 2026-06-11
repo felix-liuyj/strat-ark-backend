@@ -132,7 +132,7 @@ async def update_risk_rule(
     "/risk/events",
     response_model=BaseResponseModel[list[RiskEventResponseData]],
     summary="风控触发记录列表",
-    description="返回当前用户的风控触发记录；无记录时回落到默认事件集（只读，不落库）。",
+    description="返回当前用户的风控触发记录；无记录时返回空列表。",
     tags=["StratArk/风控中心"],
 )
 async def list_risk_events(

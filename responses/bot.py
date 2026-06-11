@@ -34,10 +34,10 @@ class BotListItemResponseData(ApiResponseModel):
     status: BotStatusEnum = Field(..., description="运行状态")
     strategyName: str = Field(..., description="策略名称")
     exchangeName: str = Field(..., description="交易所账户名称")
-    todayPnlPct: float = Field(..., description="今日收益百分比")
+    todayPnlPct: float | None = Field(None, description="今日收益百分比；运行实例不可达时为空")
     todayPnlLabel: str = Field(..., description="今日收益文案，例如 +2.3%")
     pnlPositive: bool = Field(..., description="今日收益是否为正")
-    positions: int = Field(..., description="当前持仓数")
+    positions: int | None = Field(None, description="当前持仓数；运行实例不可达时为空")
     pairs: list[str] = Field(..., description="交易对列表")
 
 

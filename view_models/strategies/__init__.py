@@ -63,6 +63,12 @@ _DEFAULT_PARAMS: dict[StrategyTypeEnum, list[list[str]]] = {
     StrategyTypeEnum.AI_ASSISTED: [["Min Confidence", "0.65"], ["Position Size", "3%"], ["Stoploss", "-5%"]],
     StrategyTypeEnum.RISK_GUARD: [["Max Drawdown", "-10%"], ["Daily Loss", "-3%"], ["Leverage Cap", "3x"]],
 }
+_SYMBOL_PATTERN = re.compile(r"\b[A-Z0-9]{2,15}/[A-Z0-9]{2,15}\b")
+
+
+def _extract_symbol(value: str) -> str | None:
+    match = _SYMBOL_PATTERN.search(value.upper())
+    return match.group(0) if match else None
 
 
 def _build_source_preview(name: str, timeframe: str, params: list[list[str]]) -> str:
@@ -264,6 +270,7 @@ class CreateStrategyViewModel(_AuthedStrategyViewModel):
             params=params,
             tags=[_TYPE_LABELS.get(self.form.strategyType, ""), self.form.timeframe],
             source_code=_build_source_preview(name, self.form.timeframe, params),
+            description=(self.form.description or "").strip(),
         )
         self.db.add(strategy)
         await self.db.flush()
@@ -372,14 +379,18 @@ class UpdateStrategyViewModel(_AuthedStrategyViewModel):
         if self.form.timeframe is not None:
             strategy.timeframe = self.form.timeframe
             changes["timeframe"] = self.form.timeframe
+        if self.form.description is not None:
+            strategy.description = self.form.description.strip()
+            changes["description"] = strategy.description
         if self.form.market is not None:
             strategy.market = self.form.market.strip()
+            changes["market"] = strategy.market
         if self.form.params is not None:
             strategy.params = self.form.params
             strategy.source_code = _build_source_preview(strategy.name, strategy.timeframe, self.form.params)
             changes["params"] = self.form.params
 
-        if not changes and self.form.market is None:
+        if not changes:
             self.nothing_changed()
             return
 
@@ -416,7 +427,10 @@ class SubmitStrategyBacktestViewModel(_AuthedStrategyViewModel):
             self.not_found("策略不存在")
             return
 
-        symbol = strategy.market.strip() or "BTC/USDT"
+        symbol = _extract_symbol(strategy.market)
+        if symbol is None:
+            self.illegal_parameters("策略未配置可回测交易对，请先填写如 BTC/USDT 的适用市场")
+            return
         task = BacktestTask(
             user_id=int(self.checker.user_id),
             strategy_id=strategy.id,
