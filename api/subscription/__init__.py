@@ -102,7 +102,7 @@ async def cancel_subscription(
     response_model=BaseResponseModel[CheckoutResponseData],
     summary="发起套餐升级 / 切换（Stripe Checkout）",
     description="已配 Stripe 创建订阅 Checkout 会话返回跳转 URL（mode=checkout，激活以 Webhook 为准）；"
-    "未配 Stripe 回退本地即时生效（mode=applied）。",
+    "未配置 Stripe 时返回业务错误（须先在后台启用并同步 Stripe；本地即时切换走 /subscription/change）。",
     tags=["StratArk/订阅计费"],
 )
 async def create_checkout(
