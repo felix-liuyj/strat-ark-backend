@@ -73,9 +73,9 @@ poetry run python -m unittest discover -s tests -v
 
 ```text
 strat-ark-backend/
-├── api/            # 路由层（仅参数映射）：auth/common + exchanges/bots/strategies/
-│                   #   backtests/signals/ai/risk/trades/market/notification/engine/
-│                   #   audit/subscription/settings/user_center
+├── api/            # 路由层（仅参数映射）：auth/common + dashboard/navigation/exchanges/
+│                   #   bots/strategies/backtests/signals/ai/risk/trades/market/
+│                   #   notification/engine/audit/subscription/settings/user_center
 ├── forms/          # 请求表单（ApiFormModel + Body(embed)，camelCase）
 ├── responses/      # 响应模型（ApiResponseModel + Field，camelCase）
 ├── view_models/    # 业务逻辑（BaseViewModel，async with 生命周期，before()）
@@ -114,8 +114,10 @@ strat-ark-backend/
 | 订阅 subscription | Pricing / 套餐与用量 | 套餐目录 / 当前订阅 / Stripe Checkout / 用量 / 账单发票 |
 | 设置 settings | Settings | General / LLM 网关 / Prompt 模板 / 外观 / 数据 |
 | 用户中心 user_center | User Center | 平台 API Key / 第三方账号绑定 / 活跃会话 / 2FA |
+| 仪表盘 dashboard | Dashboard | 首屏聚合：账户概览 / 风险 / 指标 / AI 摘要 / 机器人 / 信号 / 持仓 |
+| 导航 navigation | 应用骨架 | 侧栏徽标计数（待处理信号 / 运行中机器人 / 未读通知）|
 
-共 29 张表、120+ 条路由；完整端点见 `/docs`。
+共 29 张表、141 条路由（19 业务域，另含 `common` 健康检查 / OSS 直传）；完整端点见 `/docs`。
 
 ## 核心能力
 
@@ -125,6 +127,7 @@ strat-ark-backend/
 - **订阅计费**：套餐 / 用量 / 账单；付费切换走 Stripe Checkout，订阅激活与发票以 Stripe Webhook 为准。
 - **统一响应契约 + 全局异常处理**：`operating_successfully` / `not_found` / `forbidden` 等；401/403/422/500 收敛为业务响应。
 - **OSS 直传**：`/common/oss/presign` + `/common/oss/confirm`，目录和扩展名白名单校验后再签发 PUT URL。
+- **前后端契约**：前端 `src/api` + `src/types` 与后端 `forms/` `responses/` 逐字段对齐（19 域 / 141 路由），权威映射见 [`docs/前后端接口契约.md`](docs/前后端接口契约.md)；`tests/test_platform_contract.py` 守护路由注册与 REST 规范。
 
 ## 外部集成
 
