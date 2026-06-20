@@ -22,19 +22,37 @@ __all__ = (
     "create_billing_portal_session",
     "create_checkout_session",
     "ensure_customer",
+    "stripe_api_enabled",
     "stripe_enabled",
+    "stripe_webhook_enabled",
     "sync_plan_to_stripe",
 )
 
+_STRIPE_API_VERSION = "2026-02-25.clover"
+
+
+def stripe_api_enabled() -> bool:
+    """是否已配置 Stripe API 密钥。"""
+    return bool(get_settings().STRIPE_SECRET_KEY)
+
+
+def stripe_webhook_enabled() -> bool:
+    """是否已配置 Stripe Webhook 验签密钥。"""
+    return bool(get_settings().STRIPE_WEBHOOK_SECRET)
+
 
 def stripe_enabled() -> bool:
-    """是否已配置 Stripe 密钥（未配置时支付相关端点返回明确错误）。"""
-    return bool(get_settings().STRIPE_SECRET_KEY)
+    """Stripe Billing 是否完整启用：Checkout 必须具备 API 密钥和 Webhook 密钥。"""
+    return stripe_api_enabled() and stripe_webhook_enabled()
 
 
 def _init_stripe() -> None:
     """调用前设置 stripe SDK 密钥。"""
-    stripe.api_key = get_settings().STRIPE_SECRET_KEY
+    secret_key = get_settings().STRIPE_SECRET_KEY
+    if not secret_key:
+        raise RuntimeError("缺少 STRIPE_SECRET_KEY")
+    stripe.api_key = secret_key
+    stripe.api_version = _STRIPE_API_VERSION
 
 
 def ensure_customer(*, customer_id: str | None, email: str, name: str, user_id: str) -> str:
@@ -90,7 +108,10 @@ def create_billing_portal_session(*, customer_id: str, return_url: str) -> str:
 def construct_webhook_event(payload: bytes, sig_header: str) -> Any:
     """校验 Stripe-Signature 并构造 Webhook 事件（验签失败抛 stripe 异常，由调用方拦截）。"""
     _init_stripe()
-    return stripe.Webhook.construct_event(payload, sig_header, get_settings().STRIPE_WEBHOOK_SECRET)
+    webhook_secret = get_settings().STRIPE_WEBHOOK_SECRET
+    if not webhook_secret:
+        raise RuntimeError("缺少 STRIPE_WEBHOOK_SECRET")
+    return stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
 
 
 def _ensure_price(

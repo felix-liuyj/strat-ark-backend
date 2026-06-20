@@ -48,7 +48,7 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production}
       ADMIN_EMAIL_SUFFIXES: ${ADMIN_EMAIL_SUFFIXES:-stratark.io}
       ENCRYPT_KEY: ${ENCRYPT_KEY:-}
-      # Stripe 订阅支付：留空即未启用（结账回退本地即时生效，不发起真实扣费）
+      # Stripe 订阅支付：留空即未启用；付费套餐切换会明确失败，不做本地付费回退
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       # Checkout / Portal 回跳基址，留空取首个 CORS origin

@@ -110,9 +110,21 @@ class Settings(BaseSettings):
 
     @computed_field
     @property
-    def stripe_enabled(self) -> bool:
-        """是否已配置 Stripe（未配置时付费切换返回明确错误）。"""
+    def stripe_api_enabled(self) -> bool:
+        """是否已配置 Stripe API 密钥（Product / Price 同步、Portal、取消订阅可用）。"""
         return bool(self.STRIPE_SECRET_KEY)
+
+    @computed_field
+    @property
+    def stripe_webhook_enabled(self) -> bool:
+        """是否已配置 Stripe Webhook 密钥（订阅激活回写的必要条件）。"""
+        return bool(self.STRIPE_WEBHOOK_SECRET)
+
+    @computed_field
+    @property
+    def stripe_enabled(self) -> bool:
+        """Stripe Billing 是否完整启用（Checkout 必须同时具备 API 与 Webhook 密钥）。"""
+        return self.stripe_api_enabled and self.stripe_webhook_enabled
 
     @computed_field
     @property

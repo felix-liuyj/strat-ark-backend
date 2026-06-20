@@ -69,7 +69,7 @@ class CurrentSubscriptionResponseData(ApiResponseModel):
     startedAt: str | None = Field(None, description="开始时间")
     currentPeriodEnd: str | None = Field(None, description="下次续费时间")
     canceledAt: str | None = Field(None, description="取消时间")
-    stripeEnabled: bool = Field(..., description="平台是否启用 Stripe（决定前端展示客户门户还是本地取消）")
+    stripeEnabled: bool = Field(..., description="Stripe Billing 是否完整启用（API 与 Webhook 密钥均已配置）")
 
 
 class InvoiceResponseData(ApiResponseModel):

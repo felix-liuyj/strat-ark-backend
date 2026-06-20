@@ -69,8 +69,8 @@ async def get_current_subscription(
 @router.post(
     "/subscription/change",
     response_model=BaseResponseModel[CurrentSubscriptionResponseData],
-    summary="即时变更套餐（未启用 Stripe）",
-    description="未配置 Stripe 时本地即时切换套餐并返回最新订阅概况；已启用 Stripe 时拒绝（必须走结账流程）。",
+    summary="套餐变更兼容入口",
+    description="保留给旧前端调用的兼容入口；付费套餐必须通过 /subscription/checkout 完成 Stripe Checkout。",
     tags=["StratArk/订阅计费"],
 )
 async def change_plan(
@@ -101,8 +101,8 @@ async def cancel_subscription(
     "/subscription/checkout",
     response_model=BaseResponseModel[CheckoutResponseData],
     summary="发起套餐升级 / 切换（Stripe Checkout）",
-    description="已配 Stripe 创建订阅 Checkout 会话返回跳转 URL（mode=checkout，激活以 Webhook 为准）；"
-    "未配置 Stripe 时返回业务错误（须先在后台启用并同步 Stripe；本地即时切换走 /subscription/change）。",
+    description="Stripe API 与 Webhook 密钥均已配置时创建订阅 Checkout 会话返回跳转 URL"
+    "（mode=checkout，激活以 Webhook 为准）；未完整配置时返回业务错误。",
     tags=["StratArk/订阅计费"],
 )
 async def create_checkout(

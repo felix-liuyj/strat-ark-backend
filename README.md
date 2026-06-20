@@ -124,7 +124,7 @@ strat-ark-backend/
 - **ViewModel 三层**：路由（参数映射）→ ViewModel（`async with` 生命周期，`before()`）→ 统一响应。
 - **JWT 鉴权 + OAuth 登录**：access/refresh 双 token；Google / Microsoft 授权码后端 exchange；引擎管理与审计日志仅管理员。
 - **平台审计**：append-only + sha256 链式签名（可校验、不可篡改），危险运维操作自动留痕。
-- **订阅计费**：套餐 / 用量 / 账单；付费切换走 Stripe Checkout，订阅激活与发票以 Stripe Webhook 为准。
+- **订阅计费**：套餐 / 用量 / 账单；付费切换走 Stripe Checkout，订阅激活与发票以 Stripe Webhook 为准，集成边界见 [`docs/Stripe订阅计费架构.md`](docs/Stripe订阅计费架构.md)。
 - **统一响应契约 + 全局异常处理**：`operating_successfully` / `not_found` / `forbidden` 等；401/403/422/500 收敛为业务响应。
 - **OSS 直传**：`/common/oss/presign` + `/common/oss/confirm`，目录和扩展名白名单校验后再签发 PUT URL。
 - **前后端契约**：前端 `src/api` + `src/types` 与后端 `forms/` `responses/` 逐字段对齐（19 域 / 141 路由），权威映射见 [`docs/前后端接口契约.md`](docs/前后端接口契约.md)；`tests/test_platform_contract.py` 守护路由注册与 REST 规范。

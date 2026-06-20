@@ -169,7 +169,7 @@ def _build_plan_response(plan: Plan) -> PlanResponseData:
 def _build_current_subscription(
     plan_code: PlanEnum, sub: Subscription | None, *, fallback_unit_price: float = 0.0
 ) -> CurrentSubscriptionResponseData:
-    """从 users.plan + 最新 active 订阅记录构造当前订阅概况（含 stripeEnabled 开关）。"""
+    """从 users.plan + 最新 active 订阅记录构造当前订阅概况（含 Stripe Billing 开关）。"""
     return CurrentSubscriptionResponseData(
         planCode=plan_code,
         status=sub.status if sub else SubscriptionStatusEnum.ACTIVE,
@@ -216,6 +216,69 @@ async def _load_actual_usage(db: AsyncSession, user_id: int) -> dict[UsageMetric
     }
 
 
+def _subscription_unit_price(plan: Plan, cycle: BillingCycleEnum) -> float:
+    if cycle == BillingCycleEnum.YEARLY:
+        return float(plan.price_yearly_per_month)
+    return float(plan.price_monthly)
+
+
+def _subscription_period_end(now: datetime, cycle: BillingCycleEnum) -> datetime:
+    period_days = 365 if cycle == BillingCycleEnum.YEARLY else 30
+    return now + timedelta(days=period_days)
+
+
+async def _cancel_active_subscriptions(
+    db: AsyncSession, user_id: int, now: datetime, *, except_id: int | None = None
+) -> None:
+    actives = (
+        await db.scalars(
+            select(Subscription).where(
+                Subscription.user_id == user_id,
+                Subscription.status == SubscriptionStatusEnum.ACTIVE,
+            )
+        )
+    ).all()
+    for sub in actives:
+        if except_id is not None and sub.id == except_id:
+            continue
+        sub.status = SubscriptionStatusEnum.CANCELED
+        sub.canceled_at = now
+
+
+async def _get_subscription_by_stripe_id(db: AsyncSession, stripe_subscription_id: str | None) -> Subscription | None:
+    if not stripe_subscription_id:
+        return None
+    return await db.scalar(
+        select(Subscription).where(Subscription.stripe_subscription_id == stripe_subscription_id)
+    )
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _invoice_metadata(invoice: Any) -> dict[str, Any]:
+    details = _as_dict(invoice.get("subscription_details"))
+    return _as_dict(details.get("metadata")) or _as_dict(invoice.get("metadata"))
+
+
+def _invoice_subscription_id(invoice: Any) -> str | None:
+    subscription_id = invoice.get("subscription")
+    if subscription_id:
+        return str(subscription_id)
+    parent = _as_dict(invoice.get("parent"))
+    details = _as_dict(parent.get("subscription_details"))
+    value = details.get("subscription")
+    return str(value) if value else None
+
+
+def _plan_from_metadata(metadata: dict[str, Any]) -> PlanEnum | None:
+    try:
+        return PlanEnum(str(metadata.get("plan") or ""))
+    except ValueError:
+        return None
+
+
 async def _apply_subscription_change(
     db: AsyncSession,
     user: User,
@@ -230,19 +293,24 @@ async def _apply_subscription_change(
     用于 Stripe Webhook 激活订阅；发票由 invoice.paid 事件单独落地、带托管 PDF 链接。
     """
     now = datetime.now(UTC)
-    actives = (
-        await db.scalars(
-            select(Subscription).where(
-                Subscription.user_id == user.id,
-                Subscription.status == SubscriptionStatusEnum.ACTIVE,
-            )
-        )
-    ).all()
-    for sub in actives:
-        sub.status = SubscriptionStatusEnum.CANCELED
-        sub.canceled_at = now
-    unit_price = float(plan.price_yearly_per_month) if cycle == BillingCycleEnum.YEARLY else float(plan.price_monthly)
-    period_days = 365 if cycle == BillingCycleEnum.YEARLY else 30
+    unit_price = _subscription_unit_price(plan, cycle)
+    period_end = _subscription_period_end(now, cycle)
+    existing = await _get_subscription_by_stripe_id(db, stripe_subscription_id)
+    if existing is not None:
+        await _cancel_active_subscriptions(db, user.id, now, except_id=existing.id)
+        existing.plan_code = plan.code
+        existing.billing_cycle = cycle
+        existing.status = SubscriptionStatusEnum.ACTIVE
+        existing.unit_price = unit_price
+        existing.started_at = existing.started_at or now
+        existing.current_period_end = existing.current_period_end or period_end
+        existing.canceled_at = None
+        user.plan = plan.code
+        await db.commit()
+        await db.refresh(existing)
+        return existing
+
+    await _cancel_active_subscriptions(db, user.id, now)
     subscription = Subscription(
         user_id=user.id,
         plan_code=plan.code,
@@ -250,7 +318,7 @@ async def _apply_subscription_change(
         status=SubscriptionStatusEnum.ACTIVE,
         unit_price=unit_price,
         started_at=now,
-        current_period_end=now + timedelta(days=period_days),
+        current_period_end=period_end,
         stripe_subscription_id=stripe_subscription_id,
     )
     db.add(subscription)
@@ -480,7 +548,7 @@ class ChangePlanViewModel(BaseViewModel):
 class CancelSubscriptionViewModel(BaseViewModel):
     """取消订阅（POST /subscription/cancel）：撤销 active 订阅并降回免费套餐。
 
-    若订阅由 Stripe 管理（有 stripe_subscription_id 且已启用 Stripe），先取消 Stripe 侧订阅，
+    若订阅由 Stripe 管理（有 stripe_subscription_id 且已配置 Stripe API），先取消 Stripe 侧订阅，
     避免本地降级后 Stripe 继续扣费。
     """
 
@@ -514,13 +582,17 @@ class CancelSubscriptionViewModel(BaseViewModel):
             return
 
         for sub in actives:
-            if sub.stripe_subscription_id and billing.stripe_enabled():
-                try:
-                    billing.cancel_subscription(sub.stripe_subscription_id)
-                except Exception as exc:
-                    logger.error(f"stripe 订阅取消失败({sub.stripe_subscription_id}): {exc}")
-                    self.system_error("取消订阅失败，请稍后重试或通过客户门户操作")
-                    return
+            if not sub.stripe_subscription_id:
+                continue
+            if not billing.stripe_api_enabled():
+                self.system_error("支付服务未配置，无法安全取消 Stripe 订阅")
+                return
+            try:
+                billing.cancel_subscription(sub.stripe_subscription_id)
+            except Exception as exc:
+                logger.error(f"stripe 订阅取消失败({sub.stripe_subscription_id}): {exc}")
+                self.system_error("取消订阅失败，请稍后重试或通过客户门户操作")
+                return
 
         now = datetime.now(UTC)
         for sub in actives:
@@ -566,7 +638,7 @@ class CreateCheckoutViewModel(BaseViewModel):
 
         cycle = self.form.billingCycle
         if not billing.stripe_enabled():
-            self.illegal_parameters("未启用 Stripe 结账，无法切换付费套餐")
+            self.illegal_parameters("Stripe 结账未完整配置，缺少 STRIPE_SECRET_KEY 或 STRIPE_WEBHOOK_SECRET")
             return
         price_id = plan.stripe_price_yearly_id if cycle == BillingCycleEnum.YEARLY else plan.stripe_price_monthly_id
         if not price_id:
@@ -611,7 +683,7 @@ class CreatePortalViewModel(BaseViewModel):
         if user is None:
             self.unauthorized(AUTH_INVALID_MESSAGE)
             return
-        if not billing.stripe_enabled():
+        if not billing.stripe_api_enabled():
             self.illegal_parameters("未启用 Stripe 客户门户")
             return
         if not user.stripe_customer_id:
@@ -645,7 +717,7 @@ class StripeWebhookViewModel(BaseViewModel):
             await self._dispatch(event)
         except Exception as exc:
             # 路由层映射为 HTTP 500，交给 Stripe 指数退避重试自愈瞬态故障；
-            # 会话随请求回滚，处理器重放安全（checkout 全或无、发票按 invoice_no 去重）。
+            # 会话随请求回滚，处理器重放安全（订阅按 stripe_subscription_id，发票按 invoice_no 去重）。
             logger.error(f"stripe webhook 处理异常: {exc}")
             self.system_error("Webhook 处理失败")
             return
@@ -684,12 +756,15 @@ class StripeWebhookViewModel(BaseViewModel):
         cycle_value = metadata.get("cycle", "monthly")
         cycle = BillingCycleEnum.YEARLY if cycle_value == BillingCycleEnum.YEARLY.value else BillingCycleEnum.MONTHLY
         sub_id = session.get("subscription")
+        if not sub_id:
+            await self.db.commit()
+            return
         await _apply_subscription_change(
             self.db,
             user,
             plan,
             cycle,
-            stripe_subscription_id=str(sub_id) if sub_id else None,
+            stripe_subscription_id=str(sub_id),
             write_invoice=False,
         )
 
@@ -731,15 +806,17 @@ class StripeWebhookViewModel(BaseViewModel):
         existing = await self.db.scalar(select(Invoice).where(Invoice.invoice_no == invoice_no))
         if existing is not None:
             return  # 幂等：同一发票号不重复落地。
+        local_subscription = await _get_subscription_by_stripe_id(self.db, _invoice_subscription_id(inv))
+        metadata_plan = _plan_from_metadata(_invoice_metadata(inv))
         amount = float(inv.get("amount_paid", 0) or 0) / 100.0
         currency = str(inv.get("currency") or "usd").upper()
         external_url = inv.get("hosted_invoice_url") or inv.get("invoice_pdf")
         self.db.add(
             Invoice(
                 user_id=user.id,
-                subscription_id=None,
+                subscription_id=local_subscription.id if local_subscription else None,
                 invoice_no=invoice_no,
-                plan_code=user.plan,
+                plan_code=metadata_plan or (local_subscription.plan_code if local_subscription else user.plan),
                 item="subscription.invoice.subscription",
                 amount=amount,
                 currency=currency,
@@ -823,7 +900,7 @@ class SyncPlanToStripeViewModel(_AdminSubscriptionViewModel):
         await super().before()
         if not self._require_admin():
             return
-        if not billing.stripe_enabled():
+        if not billing.stripe_api_enabled():
             self.system_error("支付服务未配置（缺少 STRIPE_SECRET_KEY）")
             return
         plan = await _get_plan(self.db, self.code)
