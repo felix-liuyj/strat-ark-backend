@@ -6,6 +6,12 @@
 #           （叠加 Freqtrade 编排器 + TradingAgents API 服务，敏感值走 .env，模板见 .env.compose.example）
 # 种子数据：docker compose exec backend python -m scripts.seed
 # 访问：前端 http://localhost:3000 · 后端文档 http://localhost:8000/docs
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -22,6 +28,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    logging: *default-logging
     networks: [stratark]
 
   redis:
@@ -33,6 +40,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    logging: *default-logging
     networks: [stratark]
 
   backend:
@@ -81,7 +89,11 @@ services:
     ports:
       - "8000:8000"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/docs || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import json,urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8000/health', timeout=3))['data']; raise SystemExit(0 if d['server'] and d['database'] and d['redis'] else 1)\"",
+        ]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -91,6 +103,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    logging: *default-logging
     networks: [stratark]
 
   frontend:
@@ -119,7 +132,9 @@ services:
       retries: 5
       start_period: 10s
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    logging: *default-logging
     networks: [stratark]
 
 volumes:

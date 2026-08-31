@@ -5,10 +5,11 @@ EMA 快慢线多头排列 + RSI 阈值过滤的趋势跟随：快线上穿慢线
 参数与平台 Strategy 表 params 对齐：EMA Fast 21 / EMA Slow 55 / RSI Period 14 / RSI Threshold 52。
 """
 
-import talib.abstract as ta
-from pandas import DataFrame
+from typing import ClassVar
 
+import talib.abstract as ta
 from freqtrade.strategy import IntParameter, IStrategy
+from pandas import DataFrame
 
 
 class TrendEmaRsiV1(IStrategy):
@@ -19,7 +20,7 @@ class TrendEmaRsiV1(IStrategy):
     process_only_new_candles = True
     startup_candle_count = 60
 
-    minimal_roi = {"0": 0.08, "120": 0.04, "360": 0.02}
+    minimal_roi: ClassVar[dict[str, float]] = {"0": 0.08, "120": 0.04, "360": 0.02}
     stoploss = -0.06
     trailing_stop = True
     trailing_stop_positive = 0.015

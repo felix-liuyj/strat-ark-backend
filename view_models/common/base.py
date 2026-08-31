@@ -1,5 +1,6 @@
 """ViewModel base classes."""
 
+import secrets
 from time import perf_counter
 from typing import Any, Self
 
@@ -162,7 +163,7 @@ class BaseViewModel:
 
         key = self._otp_code_key(purpose, email)
         stored = await redis_cache.get(key)
-        if stored is None or stored != code:
+        if stored is None or not secrets.compare_digest(stored, code):
             return False
         await redis_cache.delete(key)
         return True

@@ -1,4 +1,4 @@
-"""数据库初始化 + 内置策略种子（幂等）。
+"""数据库初始化 + 系统目录种子（幂等）。
 
 用法（已激活 venv / poetry 环境）::
 
@@ -6,19 +6,23 @@
 
 执行内容：
 1. ``init_db()`` 建表（多 worker 安全，幂等）。
-2. 写入平台内置策略（``user_id IS NULL`` + ``is_builtin=True``），供 Strategy Lab 列表。
+2. 写入套餐目录、引擎注册表与平台内置策略。
 
 幂等：按策略名判重，已存在则跳过；可重复运行。
 账号一律走注册流程创建（管理员邮箱白名单自动判定角色），不再写演示账号。
-套餐目录、引擎默认配置等由对应 ViewModel 首次访问时惰性 seed，无需在此处理。
+读取接口不产生隐式写入；目录初始化只由 Alembic 数据迁移或本脚本显式执行。
 """
 
 import asyncio
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from configs.catalogs import ENGINE_CATALOG, PLAN_CATALOG
 from libs.ctrl.db.sqlalchemy import init_db, new_async_session
+from models.engine import Engine, EngineStatusEnum
 from models.strategy import Strategy, StrategyRiskEnum, StrategyStatusEnum, StrategyTypeEnum
+from models.subscription import Plan
 
 BUILTIN_STRATEGIES: list[dict] = [
     {
@@ -96,7 +100,31 @@ BUILTIN_STRATEGIES: list[dict] = [
 ]
 
 
-async def seed_strategies(db) -> int:
+async def seed_catalogs(db: AsyncSession) -> tuple[int, int]:
+    plan_count = 0
+    for item in PLAN_CATALOG:
+        if await db.scalar(select(Plan).where(Plan.code == item["code"])) is None:
+            db.add(Plan(**item))
+            plan_count += 1
+
+    engine_count = 0
+    for kind, item in ENGINE_CATALOG.items():
+        if await db.scalar(select(Engine).where(Engine.engine_kind == kind)) is not None:
+            continue
+        db.add(
+            Engine(
+                engine_kind=kind,
+                name=str(item["name"]),
+                status=EngineStatusEnum.STOPPED,
+                connection_config=dict(item["connection_config"]),
+                deployment_config=dict(item["deployment_config"]),
+            )
+        )
+        engine_count += 1
+    return plan_count, engine_count
+
+
+async def seed_strategies(db: AsyncSession) -> int:
     created = 0
     for spec in BUILTIN_STRATEGIES:
         exists = await db.scalar(
@@ -115,9 +143,10 @@ async def seed_strategies(db) -> int:
 async def main() -> None:
     await init_db()
     async with new_async_session() as db:
+        plans, engines = await seed_catalogs(db)
         strategies = await seed_strategies(db)
         await db.commit()
-    print(f"seed 完成：新增内置策略 {strategies} 个")
+    print(f"seed 完成：新增套餐 {plans} 个、引擎 {engines} 个、内置策略 {strategies} 个")
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ lifespan 启动一个常驻协程，按固定间隔：
 """
 
 import asyncio
+from contextlib import suppress
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -158,8 +159,6 @@ async def stop_guardian() -> None:
     global _task
     if _task is not None:
         _task.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await _task
-        except asyncio.CancelledError:
-            pass
         _task = None

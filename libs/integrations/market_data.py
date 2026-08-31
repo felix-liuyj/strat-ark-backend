@@ -42,7 +42,7 @@ __all__ = (
 # K 线周期白名单（与 Binance klines interval 对齐，前端周期切换器同源）。
 VALID_CANDLE_INTERVALS: tuple[str, ...] = ("1m", "15m", "1h", "4h", "1d")
 
-# 各周期对应的时间步长（回退 K 线生成时间轴用）。
+# 各周期对应的时间步长（K 线时间轴校验与处理用）。
 _INTERVAL_STEP: dict[str, timedelta] = {
     "1m": timedelta(minutes=1),
     "15m": timedelta(minutes=15),

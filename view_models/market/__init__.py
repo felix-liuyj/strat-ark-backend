@@ -1,7 +1,7 @@
 """行情视图模型。
 
 行情数据来自 libs/integrations/market_data（Binance 公共 REST 真实取数，外呼失败
-回退确定性数据保证离线联调可复现）；只读端点不强制登录，自选交易对读写数据库且需登录。
+返回空结果或不可用状态）；只读端点不强制登录，自选交易对读写数据库且需登录。
 """
 
 from fastapi import Request
@@ -15,6 +15,7 @@ from libs.integrations.market_data import MarketTicker
 from models.market import MarketWatchlistItem
 from responses.market import (
     CandleResponseData,
+    HeatmapCellResponseData,
     MarketDetailResponseData,
     MarketOverviewResponseData,
     MarketTickerResponseData,
@@ -116,7 +117,7 @@ class ListHeatmapViewModel(BaseViewModel):
     async def before(self) -> None:
         await super().before()
         # 热力图为「币种 -> 涨跌幅」的轻量映射，直接返回字典列表。
-        data = [{"symbol": sym, "changePct": pct} for sym, pct in await market_data.get_heatmap()]
+        data = [HeatmapCellResponseData(symbol=sym, changePct=pct) for sym, pct in await market_data.get_heatmap()]
         self.operating_successfully(data)
 
 

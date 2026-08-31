@@ -9,8 +9,10 @@ talib，便于官方镜像内直接加载。真实策略由 StratArk 策略库�
 
 from __future__ import annotations
 
-from pandas import DataFrame
+from typing import ClassVar
+
 from freqtrade.strategy import IStrategy
+from pandas import DataFrame
 
 
 class SampleStrategy(IStrategy):
@@ -22,7 +24,7 @@ class SampleStrategy(IStrategy):
     can_short = False
 
     # 与 config.json 双层约束，策略层给出更保守的兜底。
-    minimal_roi = {"0": 0.04, "60": 0.02, "120": 0.01, "240": 0.0}
+    minimal_roi: ClassVar[dict[str, float]] = {"0": 0.04, "60": 0.02, "120": 0.01, "240": 0.0}
     stoploss = -0.06
     trailing_stop = True
     trailing_stop_positive = 0.015

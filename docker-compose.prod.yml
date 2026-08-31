@@ -3,15 +3,18 @@
 #   Freqtrade 定义在 docker-compose.engines.yml，本文件通过 include 自动引入（无需再手动 -f）。
 #   TradingAgents 直接作为 API 服务部署在本文件，不再出现在 compose engine 中。
 # 前置：同目录 .env 提供生产密钥（标 `:?` 的变量缺失会直接报错，避免误用开发默认值）：
-#   POSTGRES_PASSWORD / REDIS_PASSWORD / JWT_SECRET_KEY / ENCRYPT_KEY
+#   POSTGRES_PASSWORD / REDIS_PASSWORD / JWT_SECRET_KEY / ENCRYPT_KEY / CORS_ORIGINS
 #   LLM_API_KEY / VITE_API_BASE_URL / ORCHESTRATOR_TOKEN
-#   可选：FREQTRADE_IMAGE / TRADINGAGENTS_API_IMAGE / LLM_GATEWAY_URL
+#   POSTGRES_IMAGE / REDIS_IMAGE / PYTHON_BASE_IMAGE / NODE_BASE_IMAGE / NGINX_BASE_IMAGE
+#   FREQTRADE_IMAGE / TRADINGAGENTS_API_IMAGE
+#   可选：BACKEND_WORKERS / LLM_GATEWAY_URL
 #   可选（启用 Stripe 收费时必填）：STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / FRONTEND_BASE_URL
 include:
   - docker-compose.engines.yml
 
 services:
   postgres:
+    image: ${POSTGRES_IMAGE:?生产必须设置固定的 POSTGRES_IMAGE，建议使用 digest}
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?生产必须在 .env 设置 POSTGRES_PASSWORD}
@@ -21,6 +24,7 @@ services:
           memory: 1g
 
   redis:
+    image: ${REDIS_IMAGE:?生产必须设置固定的 REDIS_IMAGE，建议使用 digest}
     restart: unless-stopped
     # 生产开启密码与 AOF 持久化
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?生产必须在 .env 设置 REDIS_PASSWORD}", "--appendonly", "yes"]
@@ -37,10 +41,21 @@ services:
           memory: 512m
 
   backend:
+    build:
+      context: .
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:?生产必须设置固定的 PYTHON_BASE_IMAGE，建议使用 digest}
     restart: unless-stopped
+    command:
+      [
+        "sh",
+        "-c",
+        "alembic upgrade head && exec gunicorn main:app --workers ${BACKEND_WORKERS:-4} --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --access-logfile - --error-logfile - --timeout 300",
+      ]
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      CORS_ORIGINS: ${CORS_ORIGINS:?生产必须设置允许的前端 CORS_ORIGINS}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?生产必须在 .env 设置 JWT_SECRET_KEY}
       ENCRYPT_KEY: ${ENCRYPT_KEY:?生产必须在 .env 设置 ENCRYPT_KEY}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
@@ -74,6 +89,8 @@ services:
     build:
       context: ../strat-ark-frontend
       args:
+        NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:?生产必须设置固定的 NODE_BASE_IMAGE，建议使用 digest}
+        NGINX_BASE_IMAGE: ${NGINX_BASE_IMAGE:?生产必须设置固定的 NGINX_BASE_IMAGE，建议使用 digest}
         VITE_APP_TITLE: ${VITE_APP_TITLE:-策舟 StratArk · AI Crypto Trading Platform}
         # 浏览器侧访问的 API 公网地址，生产必须显式设置；
         # 构建期注入兜底 + 运行时（environment.API_BASE_URL）覆写，换环境只需重启容器
@@ -90,7 +107,7 @@ services:
       API_BASE_URL: ${VITE_API_BASE_URL:?生产必须在 .env 设置 VITE_API_BASE_URL}
 
   tradingagents-api:
-    image: ${TRADINGAGENTS_API_IMAGE:-stratark/tradingagents-api:latest}
+    image: ${TRADINGAGENTS_API_IMAGE:?生产必须设置固定的 TRADINGAGENTS_API_IMAGE，建议使用 digest}
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
@@ -117,6 +134,11 @@ services:
       retries: 5
       start_period: 30s
     networks: [stratark]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     deploy:
       resources:
         limits:
@@ -126,6 +148,13 @@ services:
         reservations:
           cpus: "0.5"
           memory: 512m
+
+  freqtrade-orchestrator:
+    build:
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:?生产必须设置固定的 PYTHON_BASE_IMAGE，建议使用 digest}
+    environment:
+      INSTANCE_IMAGE: ${FREQTRADE_IMAGE:?生产必须设置固定的 FREQTRADE_IMAGE，建议使用 digest}
 
 volumes:
   redisdata:

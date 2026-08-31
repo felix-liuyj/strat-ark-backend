@@ -1,5 +1,6 @@
 # StratArk 后端镜像（FastAPI + SQLAlchemy + PostgreSQL）
-FROM python:3.13-slim
+ARG PYTHON_BASE_IMAGE=python:3.13-slim
+FROM ${PYTHON_BASE_IMAGE}
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

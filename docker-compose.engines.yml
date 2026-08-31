@@ -2,7 +2,7 @@
 # 单独启动：docker compose -f docker-compose.engines.yml up -d
 # 作为生产全栈一部分：由 docker-compose.prod.yml 通过 include 自动引入。
 #
-# 架构：不再预置单一 freqtrade 容器；由 orchestrator（独占 docker.sock）按 backend
+# 架构：不再预置单一 freqtrade 容器；由 orchestrator（持有宿主 Docker 控制权限）按 backend
 # 下发的规格为每个 bot 创建独立 freqtrade 实例容器（dry_run / live 由 env 注入，
 # 交易所凭证仅经容器环境变量传递、不落盘）。实例共享只读 user_data 卷（基础 config
 # + 内置策略），由 orchestrator 启动时初始化。
@@ -27,7 +27,7 @@ services:
       INSTANCE_NETWORK: stratark
       USERDATA_VOLUME: freqtrade_userdata
     volumes:
-      # 编排器独占 docker.sock：backend 不直连 Docker，权限隔离在本服务
+      # docker.sock 等同宿主 Docker 管理权限；必须部署在专用受控主机，backend 不直接挂载
       - /var/run/docker.sock:/var/run/docker.sock
       - freqtrade_userdata:/userdata
     tmpfs:

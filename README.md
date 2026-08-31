@@ -10,7 +10,7 @@
 ## 目录
 
 - [快速开始](#快速开始)
-- [演示账号](#演示账号)
+- [账号与种子数据](#账号与种子数据)
 - [项目结构](#项目结构)
 - [业务域与 API 模块](#业务域与-api-模块)
 - [核心能力](#核心能力)
@@ -23,11 +23,11 @@
 
 ### 方式一：Docker Compose（推荐，一键全栈）
 
-在仓库根目录（`strat-ark/`，含 `docker-compose.yml`）执行：
+在后端仓库根目录（`strat-ark-backend/`，含 `docker-compose.yml`）执行：
 
 ```sh
 docker compose up -d --build
-docker compose exec backend python -m scripts.seed   # 写入演示账号 + 内置策略
+docker compose exec backend python -m scripts.seed   # 幂等补齐系统目录与内置策略
 ```
 
 - 前端：<http://localhost:3000>
@@ -42,11 +42,12 @@ docker compose exec backend python -m scripts.seed   # 写入演示账号 + 内�
 ```sh
 poetry install
 cp .env.example .env            # 至少填写 DATABASE_URL / JWT_SECRET_KEY
-poetry run python -m scripts.seed                       # 建表 + 演示种子（幂等）
+poetry run alembic upgrade head
+poetry run python -m scripts.seed                       # 系统目录 + 内置策略（幂等）
 poetry run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-> 表结构在应用启动（lifespan `init_db`）时自动创建（多 worker 用 PG advisory lock 串行化），无需手动迁移。
+> Alembic 是现有数据库 schema 演进与目录数据迁移的唯一通道；应用启动的 `init_db()` 仅为空库兜底建表，不替代迁移。
 
 ### 质量门禁
 
@@ -57,17 +58,11 @@ poetry run python -m unittest discover -s tests -v
 
 `tests/test_platform_contract.py` 是无外部依赖的 smoke contract：不触发 lifespan，不要求 PostgreSQL / Redis 在线；用于验证 FastAPI app 可导入、平台核心模块路由已注册、REST 路径无 `/search` / `/list` / `/create` 反模式、OpenAPI 可生成以及 JWT 角色解析可用。
 
-## 演示账号
+## 账号与种子数据
 
-`scripts/seed` 写入三个演示角色账号（统一密码 `strategy123`）：
+`scripts/seed` 只幂等补齐套餐目录、引擎注册表和平台内置策略，不创建账号，也不写入演示密码。账号统一走注册流程创建。
 
-| 邮箱 | 角色 | 套餐 | 可见范围 |
-|---|---|---|---|
-| `alex@stratark.io` | 管理员 admin | Pro | 全部，含引擎管理 / 审计日志 |
-| `wei@stratark.io` | 普通用户 | Free | 普通页面（无引擎 / 审计） |
-| `lin@stratark.io` | 订阅用户 | Pro | 普通页面 + 订阅权益 |
-
-> 管理员由 `ADMIN_EMAIL_SUFFIXES`（如 `stratark.io`）判定；引擎管理与审计日志接口在 ViewModel 内强制管理员鉴权。
+管理员由 `ADMIN_EMAIL_SUFFIXES` 判定；仅应配置组织实际控制的邮箱域名。引擎管理与审计日志接口在后端强制管理员鉴权。
 
 ## 项目结构
 
@@ -88,7 +83,7 @@ strat-ark-backend/
 │   ├── handler/    # 全局异常处理
 │   └── response.py # 统一响应模型与状态码
 ├── configs/        # pydantic-settings 配置
-├── scripts/seed.py # 建表 + 演示种子（幂等）
+├── scripts/seed.py # 系统目录 + 内置策略（幂等，不创建账号）
 ├── deploy/         # systemd + Poetry 部署
 ├── Dockerfile      # 后端镜像
 └── main.py         # 应用入口
@@ -159,26 +154,26 @@ FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy 2.0（异步）· PostgreSQL（p
 | Redis | `REDIS_*` | 缓存与会话相关 Redis 连接 |
 | JWT 与管理员 | `JWT_*`、`ADMIN_EMAIL_SUFFIXES` | 自家 session 与管理员邮箱后缀 |
 | OAuth 登录 | `OAUTH_GOOGLE_CLIENT_ID`、`OAUTH_MICROSOFT_CLIENT_ID`、`OAUTH_MICROSOFT_TENANT` | Google / Microsoft Public PKCE 后端 exchange 与 id_token 校验 |
-| 业务敏感数据加密 | `ENCRYPT_KEY` | 交易所和网关密钥入库加密，生产必须注入强随机值 |
+| 业务敏感数据加密 | `ENCRYPT_KEY` | 交易所和网关密钥入库加密；必须持久化并在所有实例保持一致，生产缺失时拒绝启动 |
 | 阿里云 OSS | `ALI_OSS_*`、`BRAND_LOGO_OSS_PATH` | 文件上传和邮件 logo 公开地址；上传目录规则在 `libs/upload_rules.py` |
 | SMTP 邮件 | `SMTP_*` | 邮件验证码发送 |
 | 行情数据源 | `MARKET_DATA_*` | 行情 REST / WS 数据源，默认 Binance 公共行情 |
 | 静态资源 | `STATIC_*` | 本地静态资源目录和访问前缀 |
 
 引擎连接配置不走后端全局环境变量。Freqtrade、TradingAgents、模型网关等服务地址、
-Token、API Key 和模型参数由管理员在引擎管理中维护，按引擎类型入库并回显掩码。
+Token、API Key 和模型参数由管理员在引擎管理中维护，敏感字段 Fernet 加密入库并只回显掩码。
 
 通知渠道配置不走全局环境变量。Email、Telegram、Lark、Slack、Webhook、SMS、App Push
-等渠道的端点和凭证由用户在通知中心维护，后端按 `user_id + channel_kind` 独立入库并在
-回显时掩码敏感字段。
+等渠道的端点和凭证由用户在通知中心维护，后端按 `user_id + channel_kind` 独立入库；
+Bot Token、Webhook 地址等敏感字段 Fernet 加密入库并只回显掩码。
 
 ## 文档与部署
 
 - API 文档：`/docs`（Swagger）、`/redoc`
-- 容器编排（仓库根目录，base / Freqtrade 引擎 / 生产 override 三份）：
+- 容器编排（后端仓库根目录，base / Freqtrade 引擎 / 生产 override 三份）：
   - `docker-compose.yml` — base：PostgreSQL + Redis + 后端 + 前端；外部集成未配置时返回空结果或明确失败；本地 `docker compose up -d --build`
-  - `docker-compose.engines.yml` — **Freqtrade 执行引擎独立编排**，已按生产全面加固（非 root / read_only / cap_drop / 日志轮转 / 资源 limits+reservations）；可单独启动：`docker compose -f docker-compose.engines.yml up -d`
-  - `docker-compose.prod.yml` — 生产 override：主栈生产化，并经 `include` 自动引入 Freqtrade；TradingAgents 直接部署为 `tradingagents-api` API 服务；`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
+  - `docker-compose.engines.yml` — Freqtrade 执行引擎编排器；编排器持有宿主 Docker 控制权限，必须运行在专用受控主机。可单独启动：`docker compose -f docker-compose.engines.yml up -d`
+  - `docker-compose.prod.yml` — 生产 override：Gunicorn 多 worker、真实依赖健康检查、日志轮转，并要求显式设置生产镜像引用；`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
 - 主机部署：[`deploy/README.md`](deploy/README.md)（systemd + Poetry）
 
 ## 联系方式

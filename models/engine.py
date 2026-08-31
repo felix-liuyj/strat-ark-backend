@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from libs.ctrl.db.sqlalchemy import Base, TimestampMixin
+from libs.secure_config import ENGINE_SENSITIVE_CONFIG_KEYS, decrypt_sensitive_config
 
 __all__ = (
     "Engine",
@@ -71,7 +72,7 @@ class Engine(Base, TimestampMixin):
     引擎不做 k8s 集群化，作为独立服务运行；backend 经 ``connection_config.serviceUrl``
     暴露的 HTTP API 做服务连接交互。``connection_config`` 存服务连接（serviceUrl / token /
     timeout / 网关等），``deployment_config`` 存引擎运行设置（日志级别 / 并发 / 模型参数等，
-    非 k8s 编排 spec）；敏感字段（token / apiKey / secret）入库前由 ViewModel 掩码，不回显明文。
+    非 k8s 编排 spec）；敏感字段（token / apiKey / secret）使用 Fernet 密文入库，响应不回显明文。
     """
 
     __tablename__ = "engines"
@@ -111,4 +112,6 @@ async def get_engine_connection_config(db: AsyncSession, kind: EngineKindEnum) -
     供业务域（AI 投研等）取管理员配置的网关 / 服务地址；缺失字段由调用方回退 env。
     """
     engine = await db.scalar(select(Engine).where(Engine.engine_kind == kind))
-    return engine.connection_config if engine is not None else None
+    if engine is None:
+        return None
+    return decrypt_sensitive_config(engine.connection_config or {}, ENGINE_SENSITIVE_CONFIG_KEYS)

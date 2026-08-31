@@ -13,9 +13,8 @@ Create Date: 2026-06-10
 
 from collections.abc import Sequence
 
-from alembic import op
-
 import models  # noqa: F401 — 触发全部表注册
+from alembic import op
 from libs.ctrl.db.sqlalchemy import Base
 
 revision: str = "0001"

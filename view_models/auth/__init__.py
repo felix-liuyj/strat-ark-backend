@@ -1,9 +1,8 @@
 """Authentication view models."""
 
-import random
 import re
 import secrets
-import string
+from contextlib import suppress
 from datetime import UTC, datetime
 
 from fastapi import Request
@@ -31,6 +30,7 @@ from libs.auth.permissions import PermissionChecker
 from libs.auth.session import (
     is_refresh_jti_active,
     register_refresh_jti,
+    revoke_all_refresh_jtis,
     revoke_refresh_jti,
 )
 from libs.ctrl.cloud.oss import AliCloudOssBucketController
@@ -134,7 +134,7 @@ class SendVerificationCodeViewModel(BaseViewModel):
 
     @staticmethod
     def _generate_otp_code() -> str:
-        return "".join(random.choices(string.digits, k=BaseViewModel.OTP_CODE_LENGTH))
+        return "".join(secrets.choice("0123456789") for _ in range(BaseViewModel.OTP_CODE_LENGTH))
 
     async def _send_otp_email(self, email: str, purpose: str) -> None:
         from libs import redis_cache
@@ -147,9 +147,6 @@ class SendVerificationCodeViewModel(BaseViewModel):
         code = self._generate_otp_code()
         code_key = self._otp_code_key(purpose, email)
         limit_key = self._otp_limit_key(email)
-
-        await redis_cache.set(code_key, code, ex=self.OTP_EXPIRE_SECONDS)
-        await redis_cache.set(limit_key, "1", ex=self.OTP_RATE_LIMIT_SECONDS)
 
         subject_map = {"register": "注册验证码", "reset": "密码重置验证码"}
         subject = f"{settings.APP_NAME} - {subject_map.get(purpose, '验证码')}"
@@ -165,6 +162,8 @@ class SendVerificationCodeViewModel(BaseViewModel):
         )
 
         try:
+            await redis_cache.set(code_key, code, ex=self.OTP_EXPIRE_SECONDS)
+            await redis_cache.set(limit_key, "1", ex=self.OTP_RATE_LIMIT_SECONDS)
             controller = EmailController(
                 from_email=settings.SMTP_SENDER or settings.SMTP_USERNAME,
                 to_email=email,
@@ -176,8 +175,10 @@ class SendVerificationCodeViewModel(BaseViewModel):
             if not success:
                 raise RuntimeError("SMTP 发送返回失败")
         except Exception as exc:
-            logger.error(f"Failed to send verification email to {email}: {exc}")
-            raise RuntimeError("验证码邮件发送失败，请检查邮箱地址或稍后重试") from exc
+            with suppress(Exception):
+                await redis_cache.delete(code_key, limit_key)
+            logger.error("验证码邮件发送失败；已回滚验证码与限流状态")
+            raise RuntimeError("验证码邮件发送失败，请稍后重试") from exc
 
     async def before(self) -> None:
         await super().before()
@@ -545,6 +546,7 @@ class ResetPasswordViewModel(BaseViewModel):
 
         user.set_password(new_password)
         await self.db.commit()
+        await revoke_all_refresh_jtis(str(user.id))
         self.operating_successfully()
 
 

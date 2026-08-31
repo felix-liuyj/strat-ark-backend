@@ -63,67 +63,6 @@ __all__ = (
 # 套餐顺序：用于判定升级 / 降级方向（与前端 PLAN_ORDER 对齐）。
 _PLAN_ORDER: dict[PlanEnum, int] = {PlanEnum.FREE: 0, PlanEnum.PRO: 1, PlanEnum.TEAM: 2}
 
-# 套餐目录种子（与前端 PLANS 常量 1:1 对齐；展示文案一律存 i18n key，-1 表示无限制）。
-_PLAN_SEED: list[dict] = [
-    {
-        "code": PlanEnum.FREE,
-        "name": "subscription.plan.free",
-        "tagline": "subscription.tagline.free",
-        "price_monthly": 0,
-        "price_yearly_per_month": 0,
-        "highlight": False,
-        "features": [
-            "subscription.feat.free.bots",
-            "subscription.feat.free.strategies",
-            "subscription.feat.free.ai",
-            "subscription.feat.free.dryrun",
-        ],
-        "limit_bots": 1,
-        "limit_strategies": 3,
-        "limit_ai_analysis": 20,
-        "limit_backtests": 10,
-        "sort_order": 0,
-    },
-    {
-        "code": PlanEnum.PRO,
-        "name": "subscription.plan.pro",
-        "tagline": "subscription.tagline.pro",
-        "price_monthly": 49,
-        "price_yearly_per_month": 41,
-        "highlight": True,
-        "features": [
-            "subscription.feat.pro.bots",
-            "subscription.feat.pro.strategies",
-            "subscription.feat.pro.ai",
-            "subscription.feat.pro.live",
-        ],
-        "limit_bots": 10,
-        "limit_strategies": 20,
-        "limit_ai_analysis": 300,
-        "limit_backtests": -1,
-        "sort_order": 1,
-    },
-    {
-        "code": PlanEnum.TEAM,
-        "name": "subscription.plan.team",
-        "tagline": "subscription.tagline.team",
-        "price_monthly": 149,
-        "price_yearly_per_month": 124,
-        "highlight": False,
-        "features": [
-            "subscription.feat.team.bots",
-            "subscription.feat.team.strategies",
-            "subscription.feat.team.ai",
-            "subscription.feat.team.live",
-        ],
-        "limit_bots": -1,
-        "limit_strategies": -1,
-        "limit_ai_analysis": 2000,
-        "limit_backtests": -1,
-        "sort_order": 2,
-    },
-]
-
 # 用量维度展示标签 i18n key。
 _USAGE_LABELS: dict[UsageMetricEnum, str] = {
     UsageMetricEnum.BOTS: "subscription.usage.bots",
@@ -182,20 +121,8 @@ def _build_current_subscription(
     )
 
 
-async def _ensure_plans_seeded(db: AsyncSession) -> list[Plan]:
-    """惰性种入套餐目录：仅当 plans 表为空时写入种子，幂等。"""
-    plans = list((await db.scalars(select(Plan).order_by(Plan.sort_order.asc()))).all())
-    if plans:
-        return plans
-    for seed in _PLAN_SEED:
-        db.add(Plan(**seed))
-    await db.commit()
-    return list((await db.scalars(select(Plan).order_by(Plan.sort_order.asc()))).all())
-
-
 async def _get_plan(db: AsyncSession, code: PlanEnum) -> Plan | None:
-    plans = await _ensure_plans_seeded(db)
-    return next((p for p in plans if p.code == code), None)
+    return await db.scalar(select(Plan).where(Plan.code == code))
 
 
 async def _count_rows(db: AsyncSession, model: object, *where: object) -> int:
@@ -353,7 +280,7 @@ class ListPlansViewModel(BaseViewModel):
 
     async def before(self) -> None:
         await super().before()
-        plans = await _ensure_plans_seeded(self.db)
+        plans = list((await self.db.scalars(select(Plan).order_by(Plan.sort_order.asc()))).all())
         self.operating_successfully([_build_plan_response(p) for p in plans])
 
 
@@ -810,7 +737,7 @@ class StripeWebhookViewModel(BaseViewModel):
         metadata_plan = _plan_from_metadata(_invoice_metadata(inv))
         amount = float(inv.get("amount_paid", 0) or 0) / 100.0
         currency = str(inv.get("currency") or "usd").upper()
-        external_url = inv.get("hosted_invoice_url") or inv.get("invoice_pdf")
+        external_url = billing.stripe_hosted_url(inv.get("hosted_invoice_url") or inv.get("invoice_pdf"))
         self.db.add(
             Invoice(
                 user_id=user.id,
@@ -822,7 +749,7 @@ class StripeWebhookViewModel(BaseViewModel):
                 currency=currency,
                 status=InvoiceStatusEnum.PAID,
                 issued_at=datetime.now(UTC),
-                external_url=str(external_url) if external_url else None,
+                external_url=external_url,
             )
         )
         await self.db.commit()

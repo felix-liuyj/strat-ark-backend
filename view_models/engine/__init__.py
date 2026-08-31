@@ -10,6 +10,7 @@ from fastapi import Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from configs.catalogs import ENGINE_CATALOG
 from forms.engine import (
     EngineConnectionUpdateForm,
     EngineDeploymentUpdateForm,
@@ -18,6 +19,12 @@ from forms.engine import (
 from libs.audit.service import AuditLogService
 from libs.auth.permissions import PermissionChecker
 from libs.integrations import engine_runtime
+from libs.secure_config import (
+    ENGINE_SENSITIVE_CONFIG_KEYS,
+    decrypt_sensitive_config,
+    mask_sensitive_config,
+    merge_sensitive_config,
+)
 from models.account import UserTypeEnum
 from models.audit_log import ActorTypeEnum, AuditActionEnum, AuditCategoryEnum, AuditStatusEnum
 from models.engine import (
@@ -51,52 +58,6 @@ __all__ = (
     "UpdateEngineDeploymentViewModel",
 )
 
-# 连接 / 部署配置中需要掩码后才能回显的敏感字段。
-_SENSITIVE_CONFIG_KEYS = frozenset(
-    {"token", "apiKey", "secret", "restApiToken", "password", "orchestratorToken"}
-)
-_MASK_VALUE = "***"
-
-# 引擎默认元数据（首次访问时按类型 seed，与前端 data.ts 对齐）。
-# Freqtrade 为编排模式：connection_config 是编排器（per-bot 实例容器）的控制面配置，
-# 不再指向单一 freqtrade 实例。
-_ENGINE_DEFAULTS: dict[EngineKindEnum, dict[str, Any]] = {
-    EngineKindEnum.FREQTRADE: {
-        "name": "Freqtrade 执行引擎",
-        "connection_config": {
-            "orchestratorUrl": "http://freqtrade-orchestrator:8090",
-            "orchestratorToken": "",
-            "instanceImage": "freqtradeorg/freqtrade:stable",
-            "timeout": 30,
-        },
-        "deployment_config": {
-            "logLevel": "INFO",
-            "scheduler": 8,
-        },
-    },
-    EngineKindEnum.TRADINGAGENTS: {
-        "name": "TradingAgents API 服务",
-        "connection_config": {
-            "serviceUrl": "http://tradingagents-api.stratark-prod.svc.cluster.local:8100",
-            "redisUrl": "redis://redis.stratark-prod.svc:6379/2",
-            "vectorStore": "postgres://pgvector.stratark-prod:5432/agents",
-            "marketFeed": "wss://market-feed.stratark-prod.svc:7000",
-            "timeout": 60,
-            "gatewayProvider": "Anthropic",
-            "gatewayEndpoint": "https://api.anthropic.com",
-            "gatewayModel": "claude-opus-4-8",
-            "apiKey": "",
-        },
-        "deployment_config": {
-            "logLevel": "INFO",
-            "concurrency": 8,
-            "temperature": 0.3,
-            "maxTokens": 4096,
-        },
-    },
-}
-
-
 def _service_url(config: dict[str, Any] | None) -> str:
     """引擎服务探活地址：常规引擎取 serviceUrl，编排模式（freqtrade）取 orchestratorUrl。"""
     cfg = config or {}
@@ -113,22 +74,8 @@ def _control_path(config: dict[str, Any] | None, key: str, fallback: str = "") -
     return str(cfg.get(key) or fallback)
 
 
-def _mask_config(config: dict[str, Any]) -> dict[str, Any]:
-    """对配置中的敏感字段做掩码，避免明文回显。"""
-    masked: dict[str, Any] = {}
-    for key, value in config.items():
-        masked[key] = _MASK_VALUE if key in _SENSITIVE_CONFIG_KEYS and value else value
-    return masked
-
-
-def _merge_config(stored: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-    """合并配置：掩码占位（***）字段不覆盖已存值。"""
-    merged = dict(stored or {})
-    for key, value in incoming.items():
-        if value == _MASK_VALUE:
-            continue
-        merged[key] = value
-    return merged
+def _runtime_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    return decrypt_sensitive_config(config or {}, ENGINE_SENSITIVE_CONFIG_KEYS)
 
 
 def _build_engine(engine: Engine) -> EngineResponseData:
@@ -154,7 +101,7 @@ def _build_op(op: EngineOp) -> EngineOpResponseData:
 
 
 class _AdminEngineViewModel(BaseViewModel):
-    """引擎域共享基类：统一管理员校验 + 引擎按类型 seed / 获取。"""
+    """引擎域共享基类：统一管理员校验与显式写入创建。"""
 
     checker: PermissionChecker
     db: AsyncSession
@@ -166,26 +113,40 @@ class _AdminEngineViewModel(BaseViewModel):
             return False
         return True
 
-    async def _get_or_seed_engine(self, engine_kind: EngineKindEnum) -> Engine:
+    async def _get_engine(self, engine_kind: EngineKindEnum) -> Engine:
         engine = await self.db.scalar(select(Engine).where(Engine.engine_kind == engine_kind))
         if engine is not None:
             return engine
-        defaults = _ENGINE_DEFAULTS[engine_kind]
-        engine = Engine(
-            engine_kind=engine_kind,
-            name=str(defaults["name"]),
-            status=EngineStatusEnum.RUNNING,
-            connection_config=dict(defaults["connection_config"]),  # type: ignore[arg-type]
-            deployment_config=dict(defaults["deployment_config"]),  # type: ignore[arg-type]
-        )
+        return self._default_engine(engine_kind, virtual=True)
+
+    async def _get_or_create_engine(self, engine_kind: EngineKindEnum) -> Engine:
+        engine = await self.db.scalar(select(Engine).where(Engine.engine_kind == engine_kind))
+        if engine is not None:
+            return engine
+        engine = self._default_engine(engine_kind, virtual=False)
         self.db.add(engine)
-        await self.db.commit()
-        await self.db.refresh(engine)
+        await self.db.flush()
         return engine
+
+    @staticmethod
+    def _default_engine(engine_kind: EngineKindEnum, *, virtual: bool) -> Engine:
+        defaults = ENGINE_CATALOG[engine_kind]
+        values: dict[str, Any] = {
+            "engine_kind": engine_kind,
+            "name": str(defaults["name"]),
+            "status": EngineStatusEnum.STOPPED,
+            "connection_config": dict(defaults["connection_config"]),
+            "deployment_config": dict(defaults["deployment_config"]),
+        }
+        if virtual:
+            values["id"] = -(list(EngineKindEnum).index(engine_kind) + 1)
+        return Engine(
+            **values,
+        )
 
 
 class ListEnginesViewModel(_AdminEngineViewModel):
-    """引擎列表（首次访问自动 seed 两套引擎）。"""
+    """引擎列表；缺失记录以未配置视图返回，不在 GET 路径写库。"""
 
     def __init__(self, request: Request, db: AsyncSession, checker: PermissionChecker) -> None:
         super().__init__(request=request)
@@ -196,7 +157,7 @@ class ListEnginesViewModel(_AdminEngineViewModel):
         await super().before()
         if not self._require_admin():
             return
-        engines = [await self._get_or_seed_engine(kind) for kind in EngineKindEnum]
+        engines = [await self._get_engine(kind) for kind in EngineKindEnum]
         self.operating_successfully([_build_engine(engine) for engine in engines])
 
 
@@ -221,11 +182,10 @@ class GetEngineMonitorViewModel(_AdminEngineViewModel):
         await super().before()
         if not self._require_admin():
             return
-        engine = await self._get_or_seed_engine(self.engine_kind)
-
+        engine = await self._get_engine(self.engine_kind)
         key = str(self.engine_kind)
         # 引擎经服务连接交互：运行状态由连接配置的服务地址（编排模式为编排器地址）探活派生。
-        service_url = _service_url(engine.connection_config)
+        service_url = _service_url(_runtime_config(engine.connection_config))
         snapshot = engine_runtime.fetch_runtime_snapshot(key, service_url)
         deps = engine_runtime.fetch_dependencies(key)
         logs = engine_runtime.fetch_logs(key, level=self.log_level)
@@ -268,11 +228,11 @@ class GetEngineConnectionViewModel(_AdminEngineViewModel):
         await super().before()
         if not self._require_admin():
             return
-        engine = await self._get_or_seed_engine(self.engine_kind)
+        engine = await self._get_engine(self.engine_kind)
         self.operating_successfully(
             EngineConnectionResponseData(
                 engineKind=engine.engine_kind,
-                config=_mask_config(engine.connection_config or {}),
+                config=mask_sensitive_config(engine.connection_config or {}, ENGINE_SENSITIVE_CONFIG_KEYS),
             )
         )
 
@@ -298,14 +258,16 @@ class UpdateEngineConnectionViewModel(_AdminEngineViewModel):
         await super().before()
         if not self._require_admin():
             return
-        engine = await self._get_or_seed_engine(self.engine_kind)
-        engine.connection_config = _merge_config(engine.connection_config, self.form.config)
+        engine = await self._get_or_create_engine(self.engine_kind)
+        engine.connection_config = merge_sensitive_config(
+            engine.connection_config or {}, self.form.config, ENGINE_SENSITIVE_CONFIG_KEYS
+        )
         await self.db.commit()
         await self.db.refresh(engine)
         self.operating_successfully(
             EngineConnectionResponseData(
                 engineKind=engine.engine_kind,
-                config=_mask_config(engine.connection_config or {}),
+                config=mask_sensitive_config(engine.connection_config or {}, ENGINE_SENSITIVE_CONFIG_KEYS),
             )
         )
 
@@ -325,7 +287,7 @@ class GetEngineDeploymentViewModel(_AdminEngineViewModel):
         await super().before()
         if not self._require_admin():
             return
-        engine = await self._get_or_seed_engine(self.engine_kind)
+        engine = await self._get_engine(self.engine_kind)
         self.operating_successfully(
             EngineDeploymentResponseData(
                 engineKind=engine.engine_kind,
@@ -355,8 +317,8 @@ class UpdateEngineDeploymentViewModel(_AdminEngineViewModel):
         await super().before()
         if not self._require_admin():
             return
-        engine = await self._get_or_seed_engine(self.engine_kind)
-        engine.deployment_config = _merge_config(engine.deployment_config, self.form.config)
+        engine = await self._get_or_create_engine(self.engine_kind)
+        engine.deployment_config = dict(engine.deployment_config or {}) | self.form.config
         await self.db.commit()
         await self.db.refresh(engine)
         self.operating_successfully(
@@ -416,9 +378,10 @@ class ExecuteEngineOpViewModel(_AdminEngineViewModel):
             return
 
         op_type = self.form.opType
-        engine = await self._get_or_seed_engine(self.engine_kind)
-        service_url = _service_url(engine.connection_config)
-        result = _dispatch_op(op_type, str(self.engine_kind), engine.connection_config or {})
+        engine = await self._get_or_create_engine(self.engine_kind)
+        runtime_config = _runtime_config(engine.connection_config)
+        service_url = _service_url(runtime_config)
+        result = _dispatch_op(op_type, str(self.engine_kind), runtime_config)
 
         detail: dict[str, Any] = {
             "serviceUrl": service_url,

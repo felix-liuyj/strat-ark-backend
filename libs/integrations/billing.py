@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 import stripe
 
@@ -24,11 +25,34 @@ __all__ = (
     "ensure_customer",
     "stripe_api_enabled",
     "stripe_enabled",
+    "stripe_hosted_url",
     "stripe_webhook_enabled",
     "sync_plan_to_stripe",
 )
 
 _STRIPE_API_VERSION = "2026-02-25.clover"
+_STRIPE_ROOT_DOMAIN = "stripe.com"
+
+
+def stripe_hosted_url(value: object) -> str | None:
+    """只接受 Stripe 官方 HTTPS 托管地址，阻止不可信跳转地址进入响应或账单记录。"""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    parsed = urlsplit(text)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not (
+        hostname == _STRIPE_ROOT_DOMAIN or hostname.endswith(f".{_STRIPE_ROOT_DOMAIN}")
+    ):
+        return None
+    return text
+
+
+def _require_stripe_hosted_url(value: object) -> str:
+    url = stripe_hosted_url(value)
+    if url is None:
+        raise RuntimeError("Stripe 未返回有效的 HTTPS 托管地址")
+    return url
 
 
 def stripe_api_enabled() -> bool:
@@ -89,7 +113,7 @@ def create_checkout_session(
         subscription_data={"metadata": metadata},
         allow_promotion_codes=True,
     )
-    return str(session["id"]), str(session["url"])
+    return str(session["id"]), _require_stripe_hosted_url(session.get("url"))
 
 
 def cancel_subscription(subscription_id: str) -> None:
@@ -102,7 +126,7 @@ def create_billing_portal_session(*, customer_id: str, return_url: str) -> str:
     """创建 Customer Portal 会话（管理订阅 / 支付方式 / 发票），返回门户 URL。"""
     _init_stripe()
     session = stripe.billing_portal.Session.create(customer=customer_id, return_url=return_url)
-    return str(session["url"])
+    return _require_stripe_hosted_url(session.get("url"))
 
 
 def construct_webhook_event(payload: bytes, sig_header: str) -> Any:

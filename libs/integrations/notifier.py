@@ -13,6 +13,8 @@ from time import perf_counter
 
 import httpx
 
+from libs.logger import logger
+
 __all__ = (
     "ChannelSendResult",
     "dispatch",
@@ -122,7 +124,8 @@ def send_test(channel_type: str, config: dict[str, object]) -> ChannelSendResult
         ok, message = _send(channel_type, config, "StratArk 测试通知", "这是一条渠道连通性测试。")
         return _result(channel_type, ok, message, started)
     except Exception as exc:
-        return _result(channel_type, False, f"通知发送失败：{exc}", started)
+        logger.warning(f"notification test failed for {channel_type}: {type(exc).__name__}")
+        return _result(channel_type, False, "通知发送失败，请检查渠道配置与网络连通性", started)
 
 
 def dispatch(channel_type: str, config: dict[str, object], title: str, body: str) -> ChannelSendResult:
@@ -135,4 +138,5 @@ def dispatch(channel_type: str, config: dict[str, object], title: str, body: str
         ok, message = _send(channel_type, config, title, body)
         return _result(channel_type, ok, message, started)
     except Exception as exc:
-        return _result(channel_type, False, f"通知发送失败：{exc}", started)
+        logger.warning(f"notification dispatch failed for {channel_type}: {type(exc).__name__}")
+        return _result(channel_type, False, "通知发送失败，请检查渠道配置与网络连通性", started)

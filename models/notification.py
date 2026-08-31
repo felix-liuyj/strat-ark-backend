@@ -70,8 +70,8 @@ class Notification(Base, TimestampMixin):
 class NotificationChannel(Base, TimestampMixin):
     """每用户每渠道类型一条配置。
 
-    ``config`` 按渠道类型存不同字段（敏感字段如 botToken / secret 入库前由 ViewModel
-    掩码或仅保留必要部分），如:
+    ``config`` 按渠道类型存不同字段（敏感字段如 botToken / secret / Webhook URL 使用
+    Fernet 密文入库，响应只返回掩码），如:
     - email: ``{"inbox": "...", "frequency": "realtime", "digestTime": "09:00"}``
     - telegram: ``{"botToken": "...", "chatId": "...", "format": "compact"}``
     - webhook: ``{"url": "...", "method": "POST", "contentType": "...", "secret": "..."}``

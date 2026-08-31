@@ -7,13 +7,13 @@
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.schema import CreateSchema
 
 import models  # noqa: F401 — 触发 models 包内所有子模块的 SQLAlchemy 表注册
+from alembic import context
 from configs import get_settings
 from libs.ctrl.db.sqlalchemy import Base
 

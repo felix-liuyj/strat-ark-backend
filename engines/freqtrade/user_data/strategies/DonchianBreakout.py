@@ -4,10 +4,11 @@
 参数与平台 Strategy 表 params 对齐：Channel 20 / ATR Period 14 / ATR Mult 1.5。
 """
 
-import talib.abstract as ta
-from pandas import DataFrame
+from typing import ClassVar
 
+import talib.abstract as ta
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy
+from pandas import DataFrame
 
 
 class DonchianBreakout(IStrategy):
@@ -18,7 +19,7 @@ class DonchianBreakout(IStrategy):
     process_only_new_candles = True
     startup_candle_count = 50
 
-    minimal_roi = {"0": 0.12, "240": 0.06, "720": 0.03}
+    minimal_roi: ClassVar[dict[str, float]] = {"0": 0.12, "240": 0.06, "720": 0.03}
     stoploss = -0.08
     trailing_stop = True
     trailing_stop_positive = 0.02

@@ -4,8 +4,6 @@
 渠道发送测试（调 notifier 真实发送能力）、事件 × 渠道订阅矩阵读写。
 """
 
-from typing import Any
-
 from fastapi import Request
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +16,12 @@ from forms.notification import (
 )
 from libs.auth.permissions import PermissionChecker
 from libs.integrations import notifier
+from libs.secure_config import (
+    NOTIFICATION_SENSITIVE_CONFIG_KEYS,
+    decrypt_sensitive_config,
+    mask_sensitive_config,
+    merge_sensitive_config,
+)
 from models.notification import (
     ChannelKindEnum,
     Notification,
@@ -47,74 +51,10 @@ __all__ = (
     "UpdateNotificationSubscriptionsViewModel",
 )
 
-# 渠道配置中需要掩码后才能回显的敏感字段。
-_SENSITIVE_CONFIG_KEYS = frozenset({"botToken", "secret", "apiKey", "token", "password"})
-_MASK_VALUE = "***"
-_CHANNEL_DEFAULTS: dict[ChannelKindEnum, dict[str, Any]] = {
-    ChannelKindEnum.WEB: {
-        "display_name": "Web 站内通知",
-        "subtitle": "实时推送到通知中心",
-        "is_enabled": True,
-        "config": {"desktop": True, "sound": False, "retention": "30d"},
-    },
-    ChannelKindEnum.EMAIL: {
-        "display_name": "Email 邮件",
-        "subtitle": "未绑定",
-        "is_enabled": False,
-        "config": {"inbox": "", "frequency": "realtime", "digestTime": "09:00"},
-    },
-    ChannelKindEnum.TELEGRAM: {
-        "display_name": "Telegram",
-        "subtitle": "未绑定",
-        "is_enabled": False,
-        "config": {"botToken": "", "chatId": "", "format": "compact"},
-    },
-    ChannelKindEnum.LARK: {
-        "display_name": "飞书 / Lark",
-        "subtitle": "未绑定",
-        "is_enabled": False,
-        "config": {"webhookUrl": "", "secret": ""},
-    },
-    ChannelKindEnum.SLACK: {
-        "display_name": "Slack",
-        "subtitle": "未绑定",
-        "is_enabled": False,
-        "config": {"webhookUrl": "", "channel": "", "username": "StratArk"},
-    },
-    ChannelKindEnum.DISCORD: {
-        "display_name": "Discord",
-        "subtitle": "未绑定",
-        "is_enabled": False,
-        "config": {"webhookUrl": "", "username": "StratArk"},
-    },
-    ChannelKindEnum.WEBHOOK: {
-        "display_name": "Webhook",
-        "subtitle": "自定义 HTTP 回调",
-        "is_enabled": False,
-        "config": {"url": "", "method": "POST", "contentType": "application/json", "secret": ""},
-    },
-    ChannelKindEnum.SMS: {
-        "display_name": "SMS 短信",
-        "subtitle": "短信风险与成交提醒",
-        "is_enabled": False,
-        "config": {"provider": "Twilio", "phone": "", "template": "risk_alert_short"},
-    },
-    ChannelKindEnum.APPPUSH: {
-        "display_name": "App Push",
-        "subtitle": "移动端与浏览器推送",
-        "is_enabled": False,
-        "config": {"platform": "webpush", "audience": "all_devices", "priority": "normal"},
-    },
-}
-_CHANNEL_ORDER = tuple(_CHANNEL_DEFAULTS)
-
-
-def _mask_config(config: dict[str, Any]) -> dict[str, Any]:
-    """对渠道配置中的敏感字段做掩码，避免明文回显。"""
-    masked: dict[str, Any] = {}
-    for key, value in config.items():
-        masked[key] = _MASK_VALUE if key in _SENSITIVE_CONFIG_KEYS and value else value
-    return masked
+_CHANNEL_ORDER = tuple(ChannelKindEnum)
+_PRIVATE_SUBTITLE_KINDS = frozenset(
+    {ChannelKindEnum.LARK, ChannelKindEnum.DISCORD, ChannelKindEnum.WEBHOOK}
+)
 
 
 def _channel_order_index(channel: NotificationChannel) -> int:
@@ -124,29 +64,11 @@ def _channel_order_index(channel: NotificationChannel) -> int:
         return len(_CHANNEL_ORDER)
 
 
-def _make_default_channel(user_id: int, kind: ChannelKindEnum) -> NotificationChannel:
-    data = _CHANNEL_DEFAULTS[kind]
-    return NotificationChannel(
-        user_id=user_id,
-        channel_kind=kind,
-        display_name=data["display_name"],
-        subtitle=data["subtitle"],
-        is_enabled=data["is_enabled"],
-        config=dict(data["config"]),
-    )
-
-
-async def _ensure_user_channels(db: AsyncSession, user_id: int) -> list[NotificationChannel]:
-    channels = (await db.scalars(select(NotificationChannel).where(NotificationChannel.user_id == user_id))).all()
-    existing_kinds = {channel.channel_kind for channel in channels}
-    missing = [kind for kind in _CHANNEL_ORDER if kind not in existing_kinds]
-    if not missing:
-        return sorted(channels, key=_channel_order_index)
-    for kind in missing:
-        db.add(_make_default_channel(user_id, kind))
-    await db.commit()
-    seeded = (await db.scalars(select(NotificationChannel).where(NotificationChannel.user_id == user_id))).all()
-    return sorted(seeded, key=_channel_order_index)
+def _safe_subtitle(kind: ChannelKindEnum, subtitle: str, config: dict[str, object]) -> str:
+    if kind not in _PRIVATE_SUBTITLE_KINDS:
+        return subtitle.strip()
+    has_private_url = bool(config.get("url") or config.get("webhookUrl"))
+    return "notif.chConfigured" if has_private_url else "notif.chUnbound"
 
 
 def _build_notification(item: Notification) -> NotificationResponseData:
@@ -169,7 +91,7 @@ def _build_channel(channel: NotificationChannel) -> NotificationChannelResponseD
         displayName=channel.display_name,
         subtitle=channel.subtitle,
         isEnabled=channel.is_enabled,
-        config=_mask_config(channel.config or {}),
+        config=mask_sensitive_config(channel.config or {}, NOTIFICATION_SENSITIVE_CONFIG_KEYS),
     )
 
 
@@ -327,7 +249,12 @@ class ListNotificationChannelsViewModel(BaseViewModel):
     async def before(self) -> None:
         await super().before()
         self.checker.require_auth()
-        channels = await _ensure_user_channels(self.db, int(self.checker.user_id))
+        channels = (
+            await self.db.scalars(
+                select(NotificationChannel).where(NotificationChannel.user_id == int(self.checker.user_id))
+            )
+        ).all()
+        channels = sorted(channels, key=_channel_order_index)
         self.operating_successfully([_build_channel(channel) for channel in channels])
 
 
@@ -361,13 +288,14 @@ class CreateNotificationChannelViewModel(BaseViewModel):
             self.illegal_parameters("该渠道类型已配置，请直接编辑")
             return
 
+        stored_config = merge_sensitive_config({}, self.form.config, NOTIFICATION_SENSITIVE_CONFIG_KEYS)
         channel = NotificationChannel(
             user_id=user_id,
             channel_kind=self.form.channelKind,
             display_name=self.form.displayName.strip(),
-            subtitle=self.form.subtitle.strip(),
+            subtitle=_safe_subtitle(self.form.channelKind, self.form.subtitle, self.form.config),
             is_enabled=self.form.isEnabled,
-            config=self.form.config,
+            config=stored_config,
         )
         self.db.add(channel)
         await self.db.commit()
@@ -402,18 +330,17 @@ class UpdateNotificationChannelViewModel(BaseViewModel):
 
         if self.form.displayName is not None:
             channel.display_name = self.form.displayName.strip()
-        if self.form.subtitle is not None:
-            channel.subtitle = self.form.subtitle.strip()
         if self.form.isEnabled is not None:
             channel.is_enabled = self.form.isEnabled
         if self.form.config is not None:
-            # 合并配置：掩码占位（***）的字段不覆盖已存值，避免把掩码写回库。
-            merged = dict(channel.config or {})
-            for key, value in self.form.config.items():
-                if value == _MASK_VALUE:
-                    continue
-                merged[key] = value
-            channel.config = merged
+            channel.config = merge_sensitive_config(
+                channel.config or {}, self.form.config, NOTIFICATION_SENSITIVE_CONFIG_KEYS
+            )
+        plain_config = decrypt_sensitive_config(channel.config or {}, NOTIFICATION_SENSITIVE_CONFIG_KEYS)
+        if self.form.subtitle is not None:
+            channel.subtitle = _safe_subtitle(channel.channel_kind, self.form.subtitle, plain_config)
+        elif self.form.config is not None and channel.channel_kind in _PRIVATE_SUBTITLE_KINDS:
+            channel.subtitle = _safe_subtitle(channel.channel_kind, channel.subtitle, plain_config)
 
         await self.db.commit()
         await self.db.refresh(channel)
@@ -470,7 +397,8 @@ class SendChannelTestViewModel(BaseViewModel):
             self.not_found("渠道配置不存在或无权访问")
             return
 
-        result = notifier.send_test(str(channel.channel_kind), channel.config or {})
+        config = decrypt_sensitive_config(channel.config or {}, NOTIFICATION_SENSITIVE_CONFIG_KEYS)
+        result = notifier.send_test(str(channel.channel_kind), config)
         self.operating_successfully(
             NotificationTestResponseData(
                 ok=result.ok,

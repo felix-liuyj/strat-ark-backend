@@ -4,12 +4,11 @@
 LLM 的 API Key 经掩码后返回（仅展示尾部若干位）。
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
 from libs.schema import ApiResponseModel
-from models.settings import SystemConfigGroupEnum
 
 __all__ = (
     "ConfigGroupResponseData",
@@ -26,7 +25,7 @@ class ConfigGroupResponseData(ApiResponseModel):
     items 为 key -> value 字典；LLM 分组中 apiKey 已掩码，未配置时返回空字符串。
     """
 
-    group: SystemConfigGroupEnum = Field(..., description="配置分组")
+    group: Literal["general", "llm", "appearance", "data"] = Field(..., description="可整组更新的配置分组")
     items: dict[str, Any] = Field(..., description="配置项 key -> value 字典")
 
 

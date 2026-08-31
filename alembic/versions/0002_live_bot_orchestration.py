@@ -16,17 +16,21 @@ Create Date: 2026-06-10
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
+from libs.ctrl.db.sqlalchemy import Base
 
 revision: str = "0002"
 down_revision: str | None = "0001"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+_SCHEMA = Base.metadata.schema
+
 
 def _existing_columns(table: str) -> set[str]:
     inspector = sa.inspect(op.get_bind())
-    return {column["name"] for column in inspector.get_columns(table)}
+    return {column["name"] for column in inspector.get_columns(table, schema=_SCHEMA)}
 
 
 def upgrade() -> None:
@@ -35,6 +39,7 @@ def upgrade() -> None:
         op.add_column(
             "exchange_accounts",
             sa.Column("api_key_cipher", sa.Text(), nullable=False, server_default=""),
+            schema=_SCHEMA,
         )
         op.alter_column(
             "exchange_accounts",
@@ -42,31 +47,34 @@ def upgrade() -> None:
             existing_type=sa.String(512),
             type_=sa.Text(),
             existing_nullable=False,
+            schema=_SCHEMA,
         )
 
     bot_columns = _existing_columns("bots")
     if "api_url" not in bot_columns:
-        op.add_column("bots", sa.Column("api_url", sa.String(255), nullable=True))
-        op.add_column("bots", sa.Column("api_username", sa.String(64), nullable=True))
-        op.add_column("bots", sa.Column("api_password_cipher", sa.Text(), nullable=True))
+        op.add_column("bots", sa.Column("api_url", sa.String(255), nullable=True), schema=_SCHEMA)
+        op.add_column("bots", sa.Column("api_username", sa.String(64), nullable=True), schema=_SCHEMA)
+        op.add_column("bots", sa.Column("api_password_cipher", sa.Text(), nullable=True), schema=_SCHEMA)
 
     if "freqtrade_class" not in _existing_columns("strategies"):
         op.add_column(
             "strategies",
             sa.Column("freqtrade_class", sa.String(120), nullable=False, server_default=""),
+            schema=_SCHEMA,
         )
 
 
 def downgrade() -> None:
-    op.drop_column("strategies", "freqtrade_class")
-    op.drop_column("bots", "api_password_cipher")
-    op.drop_column("bots", "api_username")
-    op.drop_column("bots", "api_url")
+    op.drop_column("strategies", "freqtrade_class", schema=_SCHEMA)
+    op.drop_column("bots", "api_password_cipher", schema=_SCHEMA)
+    op.drop_column("bots", "api_username", schema=_SCHEMA)
+    op.drop_column("bots", "api_url", schema=_SCHEMA)
     op.alter_column(
         "exchange_accounts",
         "api_secret_cipher",
         existing_type=sa.Text(),
         type_=sa.String(512),
         existing_nullable=False,
+        schema=_SCHEMA,
     )
-    op.drop_column("exchange_accounts", "api_key_cipher")
+    op.drop_column("exchange_accounts", "api_key_cipher", schema=_SCHEMA)

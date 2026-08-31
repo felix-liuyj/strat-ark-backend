@@ -1,7 +1,7 @@
 """设置域 ViewModel：系统配置读写 + Prompt 模板 CRUD + 数据导出 / 清除。
 
-配置按 用户 + 分组 + key 存于 ``system_configs``；首次读取惰性种入默认值（与前端
-SettingsPage 默认展示一致）。LLM API Key 经 Fernet 加密入库，响应层只返回掩码。
+配置按 用户 + 分组 + key 存于 ``system_configs``；缺失默认值只在响应中合并，读取
+不写库。LLM API Key 经 Fernet 加密入库，响应层只返回掩码。
 """
 
 import base64
@@ -97,35 +97,6 @@ _GROUP_DEFAULTS: dict[SystemConfigGroupEnum, dict[str, Any]] = {
     SystemConfigGroupEnum.DATA: _DATA_DEFAULTS,
 }
 
-# Prompt 模板默认种子（与前端 Prompt 模板列表对齐）。
-_PROMPT_SEED: list[dict[str, Any]] = [
-    {
-        "name": "综合市场分析 · Full Analysis",
-        "description": "8 个 Agent 协作 · 默认模板",
-        "content": "对给定标的进行多智能体综合分析，输出方向、置信度与理由。",
-        "enabled": True,
-    },
-    {
-        "name": "技术面分析 · Technical Only",
-        "description": "仅技术指标与价格结构",
-        "content": "仅基于技术指标与价格结构给出交易判断。",
-        "enabled": False,
-    },
-    {
-        "name": "回测复盘 · Backtest Review",
-        "description": "解释回测结果与改进建议",
-        "content": "解读回测指标，指出问题并给出改进建议。",
-        "enabled": False,
-    },
-    {
-        "name": "风险摘要 · Risk Summary",
-        "description": "生成 Bot 风险评估摘要",
-        "content": "基于持仓与风控规则生成 Bot 风险评估摘要。",
-        "enabled": False,
-    },
-]
-
-
 def _secret_plaintext(value: Any) -> str:
     text = str(value or "")
     if not text:
@@ -168,8 +139,18 @@ def _coerce_config_value(group: SystemConfigGroupEnum, key: str, value: Any) -> 
     return value
 
 
+def _migrate_legacy_secret_rows(existing: dict[str, SystemConfig]) -> None:
+    """在显式 LLM 配置写入时，把历史明文密钥迁移为 Fernet 密文。"""
+    for key in _SECRET_KEYS:
+        row = existing.get(key)
+        if row is None or not isinstance(row.value, str) or not row.value:
+            continue
+        if not row.value.startswith(CIPHER_PREFIX):
+            row.value = _secret_storage(row.value)
+
+
 async def _load_group(db: AsyncSession, user_id: int, group: SystemConfigGroupEnum) -> dict[str, Any]:
-    """读取某标量分组配置；缺失项用默认值补齐并持久化（惰性种入）。"""
+    """只读加载标量分组；缺失项仅在响应中合并默认值，不在 GET 路径写库。"""
     rows = (
         await db.scalars(
             select(SystemConfig).where(
@@ -178,35 +159,13 @@ async def _load_group(db: AsyncSession, user_id: int, group: SystemConfigGroupEn
             )
         )
     ).all()
-    stored = {row.key: row.value for row in rows}
-    defaults = _GROUP_DEFAULTS.get(group, {})
-
-    missing = {k: v for k, v in defaults.items() if k not in stored}
-    if missing:
-        for key, value in missing.items():
-            stored_value = _coerce_config_value(group, key, value)
-            db.add(SystemConfig(user_id=user_id, group=group, key=key, value=stored_value))
-        await db.commit()
-        stored |= {k: _coerce_config_value(group, k, v) for k, v in missing.items()}
-    if group == SystemConfigGroupEnum.LLM and await _migrate_secret_rows(db, rows):
-        stored = {row.key: row.value for row in rows}
-    return stored
-
-
-async def _migrate_secret_rows(db: AsyncSession, rows: list[SystemConfig]) -> bool:
-    changed = False
-    for row in rows:
-        if row.key not in _SECRET_KEYS or not row.value or str(row.value).startswith(CIPHER_PREFIX):
-            continue
-        row.value = _secret_storage(row.value)
-        changed = True
-    if changed:
-        await db.commit()
-    return changed
+    defaults = dict(_GROUP_DEFAULTS.get(group, {}))
+    defaults.update({row.key: row.value for row in rows})
+    return defaults
 
 
 async def _load_prompt_templates(db: AsyncSession, user_id: int) -> list[dict[str, Any]]:
-    """读取 Prompt 模板（group=prompt 多行）；为空时种入默认模板。"""
+    """只读加载 Prompt 模板；为空时返回空列表，由显式创建接口负责写入。"""
     rows = (
         await db.scalars(
             select(SystemConfig)
@@ -217,28 +176,6 @@ async def _load_prompt_templates(db: AsyncSession, user_id: int) -> list[dict[st
             .order_by(SystemConfig.id.asc())
         )
     ).all()
-    if not rows:
-        for seed in _PROMPT_SEED:
-            tpl_id = uuid.uuid4().hex
-            db.add(
-                SystemConfig(
-                    user_id=user_id,
-                    group=SystemConfigGroupEnum.PROMPT,
-                    key=tpl_id,
-                    value={"id": tpl_id, **seed},
-                )
-            )
-        await db.commit()
-        rows = (
-            await db.scalars(
-                select(SystemConfig)
-                .where(
-                    SystemConfig.user_id == user_id,
-                    SystemConfig.group == SystemConfigGroupEnum.PROMPT,
-                )
-                .order_by(SystemConfig.id.asc())
-            )
-        ).all()
     return [dict(row.value) for row in rows]
 
 
@@ -323,6 +260,8 @@ class UpdateConfigGroupViewModel(BaseViewModel):
             )
         ).all()
         existing = {row.key: row for row in rows}
+        if group == SystemConfigGroupEnum.LLM:
+            _migrate_legacy_secret_rows(existing)
 
         for key, value in self.form.items.items():
             if key in _SECRET_KEYS and isinstance(value, str) and "•" in value:

@@ -10,6 +10,7 @@ from libs.schema import ApiResponseModel
 
 __all__ = (
     "CandleResponseData",
+    "HeatmapCellResponseData",
     "MarketDetailResponseData",
     "MarketOverviewResponseData",
     "MarketTickerResponseData",
@@ -48,6 +49,11 @@ class MarketOverviewResponseData(ApiResponseModel):
 class TopMoversResponseData(ApiResponseModel):
     gainers: list[MarketTickerResponseData] = Field(..., description="涨幅榜")
     losers: list[MarketTickerResponseData] = Field(..., description="跌幅榜")
+
+
+class HeatmapCellResponseData(ApiResponseModel):
+    symbol: str = Field(..., description="基础币符号")
+    changePct: float = Field(..., description="24h 涨跌幅 %")
 
 
 class CandleResponseData(ApiResponseModel):

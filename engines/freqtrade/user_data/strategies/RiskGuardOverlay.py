@@ -5,10 +5,11 @@
 参数与平台 Strategy 表 params 对齐：Max DD 10% / Daily Loss 3% / Vol Filter on。
 """
 
-import talib.abstract as ta
-from pandas import DataFrame
+from typing import ClassVar
 
+import talib.abstract as ta
 from freqtrade.strategy import IStrategy
+from pandas import DataFrame
 
 
 class RiskGuardOverlay(IStrategy):
@@ -19,7 +20,7 @@ class RiskGuardOverlay(IStrategy):
     process_only_new_candles = True
     startup_candle_count = 60
 
-    minimal_roi = {"0": 0.05, "240": 0.025, "720": 0.01}
+    minimal_roi: ClassVar[dict[str, float]] = {"0": 0.05, "240": 0.025, "720": 0.01}
     stoploss = -0.03
     trailing_stop = True
     trailing_stop_positive = 0.01

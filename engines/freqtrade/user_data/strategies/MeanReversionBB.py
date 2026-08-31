@@ -4,10 +4,11 @@
 参数与平台 Strategy 表 params 对齐：BB Period 20 / BB Std 2.0 / RSI Period 14。
 """
 
-import talib.abstract as ta
-from pandas import DataFrame
+from typing import ClassVar
 
+import talib.abstract as ta
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy
+from pandas import DataFrame
 
 
 class MeanReversionBB(IStrategy):
@@ -18,7 +19,7 @@ class MeanReversionBB(IStrategy):
     process_only_new_candles = True
     startup_candle_count = 40
 
-    minimal_roi = {"0": 0.04, "60": 0.02, "180": 0.01}
+    minimal_roi: ClassVar[dict[str, float]] = {"0": 0.04, "60": 0.02, "180": 0.01}
     stoploss = -0.05
     trailing_stop = False
 

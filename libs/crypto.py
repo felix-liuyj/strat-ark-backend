@@ -4,8 +4,8 @@
 ``fernet::`` 前缀以区分历史占位密文（``enc::<len>``，不可逆，解密返回 None，
 调用方应提示用户重新录入）。
 
-ENCRYPT_KEY 未配置时由 lifespan 自举生成临时密钥（仅本进程有效）；用临时密钥
-加密的数据重启后无法解密，生产必须固化 ENCRYPT_KEY（compose 已 ``:?`` 强制）。
+ENCRYPT_KEY 必须由部署者生成并持久化；未配置时敏感写入会被拒绝，避免使用进程级
+临时密钥产生重启后无法解密的数据。生产启动阶段会强制校验密钥。
 """
 
 from cryptography.fernet import Fernet, InvalidToken

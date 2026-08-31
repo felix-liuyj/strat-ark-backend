@@ -4,8 +4,6 @@
 相关路径段使用 ``{symbol:path}`` 转换器接收完整交易对。
 """
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, Path, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +12,7 @@ from libs.auth.permissions import PermissionChecker, get_permission_checker
 from libs.ctrl.db import get_db
 from libs.response import BaseResponseModel, create_response
 from responses.market import (
+    HeatmapCellResponseData,
     MarketDetailResponseData,
     MarketOverviewResponseData,
     MarketTickerResponseData,
@@ -76,7 +75,7 @@ async def get_top_movers(
 
 @router.get(
     "/market/heatmap",
-    response_model=BaseResponseModel[list[dict[str, Any]]],
+    response_model=BaseResponseModel[list[HeatmapCellResponseData]],
     summary="市场热力图",
     description="返回各币种 24h 涨跌幅（symbol + changePct）。只读，无需登录。",
     tags=["StratArk/行情"],
